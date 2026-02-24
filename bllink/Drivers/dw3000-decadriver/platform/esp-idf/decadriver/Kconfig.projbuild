@@ -1,0 +1,59 @@
+menu "Decadriver"
+
+    config DW3000_GPIO_IRQ
+        int "DW3000 GPIO for IRQ"
+        default -1
+
+    config DW3000_GPIO_RESET
+        int "DW3000 GPIO for RESET"
+        default -1
+
+    config DW3000_GPIO_WAKEUP
+        int "DW3000 GPIO for WAKEUP"
+        default -1
+
+    config DW3000_SPI_MOSI
+        int "DW3000 GPIO for MOSI"
+        default -1
+
+    config DW3000_SPI_MISO
+        int "DW3000 GPIO for MISO"
+        default -1
+
+    config DW3000_SPI_CLK
+        int "DW3000 GPIO for CLK"
+        default -1
+    
+    config DW3000_SPI_CS
+        int "DW3000 GPIO for CS"
+        default -1
+
+    config DW3000_SPI_MAX_MHZ
+        int "DW3000 Max SPI speed in MHz"
+        default 22
+
+    config DW3000_SPI_TRACE
+        bool "Trace SPI transmissons"
+
+    config DW3000_SPI_TRACE_CNT
+        int "Number of SPI trace entries"
+        default 256
+        depends on DW3000_SPI_TRACE
+
+    config DW3000_SPI_TRACE_BODY_LEN
+        int "Maximum size of SPI trace body"
+        default 12
+        depends on DW3000_SPI_TRACE
+
+    config DW3000_SPI_TRACE_REALTIME
+        bool "Real-time output of SPI trace (normally too slow)"
+        depends on DW3000_SPI_TRACE
+
+    choice
+        prompt "Select  Chip"
+        config DW3000_CHIP_DW3000
+            bool "DW3000"
+        config DW3000_CHIP_DW3720
+            bool "DW3720/QM33xx"
+    endchoice
+endmenu
