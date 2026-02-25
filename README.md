@@ -19,7 +19,6 @@ A UWB-based ranging node built on a custom STM32L4 board, developed as part of a
 
 - **RTOS:** FreeRTOS
 - **Build system:** CMake
-- **Driver:** Qorvo DW3xxx Device Driver API v4.x
 - **Language:** C (C11)
 
 ***
