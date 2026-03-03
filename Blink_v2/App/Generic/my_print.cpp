@@ -24,7 +24,7 @@ void mprintf(const char *format, ...)
         if (len > 0) {
             uint32_t timeout = HAL_GetTick();
             while (CDC_Transmit_FS((uint8_t*)buffer, (uint16_t)len) == USBD_BUSY) {
-                if (HAL_GetTick() - timeout > 10) break;
+                if (HAL_GetTick() - timeout > 5) break;
             }
         }
     }

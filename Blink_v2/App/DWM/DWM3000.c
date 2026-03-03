@@ -13,16 +13,24 @@
 extern SPI_HandleTypeDef hspi1; 
 
 static bool dwm_selfTest(void);
-static void dwm_init(void);
+static bool dwm_init(void);
 
 // THE CRITICAL PART: Extern "C" wrapper for the task function
 void StartDWM(void *argument) {
     // This function is called by FreeRTOS from main.c
 
 
-    dwm_init();
+    
+    bool passed = dwm_init();;
+    if (passed) {
+        mprintf("DWM3000 initialized successfully\r\n");
+    } else {
+        mprintf("DWM3000 initialization failed\r\n");
+        vTaskDelete( NULL );
+        while(1) { } 
+    }
 
-    bool passed = dwm_selfTest();
+    passed = dwm_selfTest();
     if (passed) {
         mprintf("DWM3000 self test passed\r\n");
     } else {
@@ -68,7 +76,7 @@ static bool dwm_selfTest(void) {
     return true;
 }
 
-static void dwm_init(void) {
+static bool dwm_init(void) {
 
     dw3000_hw_init();
     dw3000_hw_reset();
@@ -76,7 +84,7 @@ static void dwm_init(void) {
 
     extern const struct dwt_probe_s dw3000_probe_interf;
     if (dwt_probe((struct dwt_probe_s *)&dw3000_probe_interf) != DWT_SUCCESS) {
-        Error_Handler();
+        return false;
     }
 
     // Poll until chip is in IDLE_RC — do NOT skip this
@@ -85,14 +93,16 @@ static void dwm_init(void) {
         osDelay(1);
         if (--timeout == 0) {
             mprintf("Idle_RC timeout");
-            Error_Handler();          // chip never became ready
+            return false;
+         // chip never became ready
         }
     }
 
     if (dwt_initialise(DWT_DW_INIT) == DWT_ERROR) {
-        Error_Handler();
+        return false;
     }
 
     dw3000_spi_speed_fast();
+    return true;
 }
 
