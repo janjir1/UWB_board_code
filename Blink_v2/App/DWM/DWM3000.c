@@ -70,8 +70,7 @@ static bool dwm_selfTest(void) {
     dwt_deviceentcnts_t cnt;
     dwt_readeventcounters(&cnt);
     if (cnt.TXF < 1) {
-        Error_Handler();
-        return false;
+        return false;      
     }
     return true;
 }
