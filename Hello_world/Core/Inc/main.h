@@ -63,8 +63,9 @@ void Error_Handler(void);
 #define DWM_WAKEUP_GPIO_Port GPIOH
 #define DWM_RSTN_Pin GPIO_PIN_1
 #define DWM_RSTN_GPIO_Port GPIOH
-#define SYS_WKUP1_DWM_Pin GPIO_PIN_0
-#define SYS_WKUP1_DWM_GPIO_Port GPIOA
+#define DWM_EXTI_Pin GPIO_PIN_0
+#define DWM_EXTI_GPIO_Port GPIOA
+#define DWM_EXTI_EXTI_IRQn EXTI0_IRQn
 #define ChipSelect_Pin GPIO_PIN_1
 #define ChipSelect_GPIO_Port GPIOA
 #define USART2_TX_Master_Pin GPIO_PIN_2

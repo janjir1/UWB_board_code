@@ -45,8 +45,8 @@
 #define DW3000_RESET_GPIO_Port   DWM_RSTN_GPIO_Port
 #define DW3000_RESET_Pin         DWM_RSTN_Pin
 
-#define DW3000_IRQ_GPIO_Port     SYS_WKUP1_DWM_GPIO_Port /* e.g. GPIOB */
-#define DW3000_IRQ_Pin           SYS_WKUP1_DWM_Pin           /* e.g. GPIO_PIN_5 */
+#define DW3000_IRQ_GPIO_Port     DWM_EXTI_GPIO_Port /* e.g. GPIOB */
+#define DW3000_IRQ_Pin           DWM_EXTI_Pin           /* e.g. GPIO_PIN_5 */
 #define DW3000_IRQ_EXTI_IRQn     EXTI1_IRQn   /* e.g. EXTI9_5_IRQn */
 
 /* #define DW3000_HAS_WAKEUP_PIN */
