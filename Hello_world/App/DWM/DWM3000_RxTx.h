@@ -54,12 +54,14 @@ typedef struct {
 
 extern QueueHandle_t rx_queue;
 extern QueueHandle_t tx_queue;
+extern QueueHandle_t wakeup_queue;
 
 
 void cb_rx_ok(const dwt_cb_data_t *cb_data);
 void cb_rx_err(const dwt_cb_data_t *cb_data);
 void cb_rx_to(const dwt_cb_data_t *cb_data);
 void cb_tx_done(const dwt_cb_data_t *cb_data);
+void cb_spi_rdy(const dwt_cb_data_t *cb_data);
 
 void dwm_rx_continuous(void);
 void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms);
@@ -68,6 +70,8 @@ dwm_tx_event_type_t dwm_tx(dwm_tx_frame_t *frame);
 void dwm_tx_test(void);
 void dwm_tx_continuous(void);
 
+void dwm_wakeup(void);
+void dwm_sleep(void);
 
 #ifdef __cplusplus
 }

@@ -147,8 +147,10 @@ static bool dwm_init(void) {
     }
 
 
+    dwt_enablespicrccheck(DWT_SPI_CRC_MODE_NO, NULL);
 
     dw3000_spi_speed_fast();
+
     __HAL_GPIO_EXTI_CLEAR_IT(DWM_EXTI_Pin);
     HAL_NVIC_EnableIRQ(EXTI0_IRQn);
     return true;
@@ -201,10 +203,12 @@ static uint16_t dwm_configure(void) {
 
     //configure for intrupts
 
-    rx_queue = xQueueCreate(8, sizeof(dwm_rx_raw_frame_t));
+    rx_queue = xQueueCreate(4, sizeof(dwm_rx_raw_frame_t));
     configASSERT(rx_queue != NULL);
-    tx_queue = xQueueCreate(4, sizeof(uint64_t));
+    tx_queue = xQueueCreate(2, sizeof(uint64_t));
     configASSERT(tx_queue != NULL);
+    wakeup_queue = xQueueCreate(1, sizeof(uint8_t));
+    configASSERT(wakeup_queue != NULL);
 
     static dwt_callbacks_s callbacks = {
     .cbTxDone  = cb_tx_done,
@@ -212,22 +216,12 @@ static uint16_t dwm_configure(void) {
     .cbRxTo    = cb_rx_to,
     .cbRxErr   = cb_rx_err,
     .cbSPIErr  = NULL,
-    .cbSPIRdy  = NULL,
+    .cbSPIRdy  = cb_spi_rdy,
     };
 
     dwt_setcallbacks(&callbacks);
 
-    dwt_setinterrupt(
-        DWT_INT_RXFCG_BIT_MASK   |   // RX good frame → cb_rx_ok
-        DWT_INT_RXFCE_BIT_MASK   |   // FCS/CRC error → cb_rx_err
-        DWT_INT_RXPHE_BIT_MASK   |   // PHR error → cb_rx_err
-        DWT_INT_RXFSL_BIT_MASK   |   // frame sync loss → cb_rx_err
-        DWT_INT_RXSTO_BIT_MASK   |   // SFD timeout → cb_rx_err
-        DWT_INT_RXFTO_BIT_MASK   |    // frame wait timeout → cb_rx_to
-        DWT_INT_TXFRS_BIT_MASK,
-        0,
-        DWT_ENABLE_INT
-    );
+    dwt_setinterrupt( DWM_IRQ_MASK, 0,DWT_ENABLE_INT);
 
     
 

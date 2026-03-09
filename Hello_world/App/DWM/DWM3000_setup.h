@@ -22,6 +22,15 @@
 #define TX_RF_Power    0xfdfdfdfd
 #define TX_RF_PGcount  0
 
+#define DWM_IRQ_MASK  (DWT_INT_RXFCG_BIT_MASK  |  \
+                       DWT_INT_RXFCE_BIT_MASK   |  \
+                       DWT_INT_RXPHE_BIT_MASK   |  \
+                       DWT_INT_RXFSL_BIT_MASK   |  \
+                       DWT_INT_RXSTO_BIT_MASK   |  \
+                       DWT_INT_RXFTO_BIT_MASK   |  \
+                       DWT_INT_TXFRS_BIT_MASK   |  \
+                       DWT_INT_SPIRDY_BIT_MASK)
+
 
 #define DWM_MAX_FRAME_LEN  127
 
