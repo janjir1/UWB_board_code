@@ -25,7 +25,7 @@ static uint16_t dwm_configure(void);
 
 
 void StartDWM(void *argument) {
-
+    mprintf("Starting DWM3000 task\r\n");
     bool passed = dwm_init();;
     if (passed) {
         mprintf("DWM3000 initialized successfully\r\n");
@@ -57,9 +57,9 @@ void StartDWM(void *argument) {
     osDelay(1000);
 
     if (addr == 0x506B) {
-        dwm_tx_test();   // device A transmits
+        dwm_tx_continuous();   // device A transmits
     } else {
-        dwm_frame_t result;
+        dwm_rx_frame_t result;
         while(1){
             osDelay(900);
             dwm_rx(&result, 200);
@@ -67,7 +67,12 @@ void StartDWM(void *argument) {
                 mprintf("Frame timeout\r\n");
             }
             else if (result.type == DWM_RX_OK) {
-                mprintf("Frame received: %d\r\n", result.type);
+                mprintf("RX OK %u bytes: ", result.len);
+                    for (uint16_t i = 0; i < result.len; i++) {
+                        mprintf("%c", (result.data[i] >= 32 && result.data[i] < 127)
+                                    ? result.data[i] : '.');
+                }
+                mprintf("\r\n", result.status);
             }
             else if (result.type == DWM_RX_ERR) {
                 mprintf("Frame error: 0x%08lX\r\n", result.status);
@@ -116,6 +121,7 @@ static bool dwm_selfTest(void) {
 
 static bool dwm_init(void) {
 
+    HAL_NVIC_DisableIRQ(EXTI0_IRQn);
     dw3000_hw_init();
     dw3000_hw_reset();
     osDelay(10);
@@ -140,7 +146,11 @@ static bool dwm_init(void) {
         return false;
     }
 
+
+
     dw3000_spi_speed_fast();
+    __HAL_GPIO_EXTI_CLEAR_IT(DWM_EXTI_Pin);
+    HAL_NVIC_EnableIRQ(EXTI0_IRQn);
     return true;
 }
 
@@ -191,10 +201,13 @@ static uint16_t dwm_configure(void) {
 
     //configure for intrupts
 
-    
+    rx_queue = xQueueCreate(8, sizeof(dwm_rx_raw_frame_t));
+    configASSERT(rx_queue != NULL);
+    tx_queue = xQueueCreate(4, sizeof(uint64_t));
+    configASSERT(tx_queue != NULL);
 
     static dwt_callbacks_s callbacks = {
-    .cbTxDone  = NULL,
+    .cbTxDone  = cb_tx_done,
     .cbRxOk    = cb_rx_ok,
     .cbRxTo    = cb_rx_to,
     .cbRxErr   = cb_rx_err,
@@ -205,17 +218,18 @@ static uint16_t dwm_configure(void) {
     dwt_setcallbacks(&callbacks);
 
     dwt_setinterrupt(
-        DWT_INT_RXFCG_BIT_MASK  |   // RX good frame → cb_rx_ok
+        DWT_INT_RXFCG_BIT_MASK   |   // RX good frame → cb_rx_ok
         DWT_INT_RXFCE_BIT_MASK   |   // FCS/CRC error → cb_rx_err
         DWT_INT_RXPHE_BIT_MASK   |   // PHR error → cb_rx_err
         DWT_INT_RXFSL_BIT_MASK   |   // frame sync loss → cb_rx_err
-        DWT_INT_RXSTO_BIT_MASK  |   // SFD timeout → cb_rx_err
-        DWT_INT_RXFTO_BIT_MASK,     // frame wait timeout → cb_rx_to
+        DWT_INT_RXSTO_BIT_MASK   |   // SFD timeout → cb_rx_err
+        DWT_INT_RXFTO_BIT_MASK   |    // frame wait timeout → cb_rx_to
+        DWT_INT_TXFRS_BIT_MASK,
         0,
         DWT_ENABLE_INT
     );
 
-    rx_queue = xQueueCreate(8, sizeof(dwm_raw_frame_t));
+    
 
     return addr;
 }

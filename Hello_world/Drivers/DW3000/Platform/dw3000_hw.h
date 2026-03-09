@@ -2,6 +2,7 @@
 #define DW3000_HW_H
 
 #include <stdbool.h>
+#define DW3000_HAS_WAKEUP_PIN
 
 int dw3000_hw_init(void);
 int dw3000_hw_init_interrupt(void);

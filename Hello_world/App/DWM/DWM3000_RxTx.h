@@ -1,16 +1,29 @@
 #pragma once
 
+#include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #include "DWM3000_setup.h"
 
+#define US_TO_DWT_TIME   65536U
+#define MS_TO_DWT_TIME    (US_TO_DWT_TIME * 1000)
+
+#define TX_DELAY_500US    (5000U * US_TO_DWT_TIME)
+
 typedef enum {
     DWM_RX_OK,
     DWM_RX_ERR,
     DWM_RX_TIMEOUT,
 } dwm_rx_event_type_t;
+
+typedef enum {
+    DWM_TX_OK,
+    DWM_TX_LATE,
+    DWM_TX_ERROR,
+} dwm_tx_event_type_t;
+
 
 typedef struct {
     dwm_rx_event_type_t type;
@@ -20,7 +33,7 @@ typedef struct {
     uint8_t             ts_buf[5];
     dwt_cirdiags_t      rx_diag;  
 
-} dwm_raw_frame_t;
+} dwm_rx_raw_frame_t;
 
 typedef struct {
     dwm_rx_event_type_t type;
@@ -31,19 +44,29 @@ typedef struct {
     int16_t             rssi_q8;
     int16_t             fp_q8; 
 
-} dwm_frame_t;
+} dwm_rx_frame_t;
+
+typedef struct {
+    uint8_t  *data;
+    uint16_t  len;
+    uint64_t  tx_timestamp;
+} dwm_tx_frame_t;
 
 extern QueueHandle_t rx_queue;
+extern QueueHandle_t tx_queue;
 
 
 void cb_rx_ok(const dwt_cb_data_t *cb_data);
 void cb_rx_err(const dwt_cb_data_t *cb_data);
 void cb_rx_to(const dwt_cb_data_t *cb_data);
+void cb_tx_done(const dwt_cb_data_t *cb_data);
 
 void dwm_rx_continuous(void);
-void dwm_rx(dwm_frame_t *result, uint32_t timeout_ms);
-void dwm_tx_test(void);
+void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms);
 
+dwm_tx_event_type_t dwm_tx(dwm_tx_frame_t *frame);
+void dwm_tx_test(void);
+void dwm_tx_continuous(void);
 
 
 #ifdef __cplusplus

@@ -19,6 +19,7 @@
 #include <inttypes.h>
 
 QueueHandle_t rx_queue = NULL;
+QueueHandle_t tx_queue = NULL;
 
 void dwm_tx_test(void) {
     uint8_t msg[] = {0xC5, 0x00, 'H', 'e', 'l', 'l', 'o'};
@@ -41,7 +42,7 @@ void dwm_tx_test(void) {
 
 
 void cb_rx_ok(const dwt_cb_data_t *cb_data) {
-    dwm_raw_frame_t frame = { .type = DWM_RX_OK, .status = cb_data->status };
+    dwm_rx_raw_frame_t frame = { .type = DWM_RX_OK, .status = cb_data->status };
 
     frame.len = cb_data->datalength - 2;  // strip CRC
     dwt_readrxdata(frame.data, frame.len, 0);
@@ -58,7 +59,7 @@ void cb_rx_ok(const dwt_cb_data_t *cb_data) {
 
 void cb_rx_err(const dwt_cb_data_t *cb_data) {
 
-    dwm_raw_frame_t frame = { .type = DWM_RX_ERR, .status = cb_data->status };
+    dwm_rx_raw_frame_t frame = { .type = DWM_RX_ERR, .status = cb_data->status };
 
     BaseType_t woken = pdFALSE;
     xQueueSendFromISR(rx_queue, &frame, &woken);
@@ -67,15 +68,28 @@ void cb_rx_err(const dwt_cb_data_t *cb_data) {
 
 void cb_rx_to(const dwt_cb_data_t *cb_data) {
     
-    dwm_raw_frame_t frame = { .type = DWM_RX_TIMEOUT, .status = 0 };
+    dwm_rx_raw_frame_t frame = { .type = DWM_RX_TIMEOUT, .status = 0 };
 
     BaseType_t woken = pdFALSE;
     xQueueSendFromISR(rx_queue, &frame, &woken);
     portYIELD_FROM_ISR(woken);
 }
 
+void cb_tx_done(const dwt_cb_data_t *cb_data)
+{
+    uint64_t ts_64 = 0;
+
+    uint8_t ts[5] = {0};
+    dwt_readtxtimestamp(ts);
+    memcpy(&ts_64, ts, 5);
+
+    BaseType_t woken = pdFALSE;
+    xQueueSendFromISR(tx_queue, &ts_64, &woken);
+    portYIELD_FROM_ISR(woken);
+}
+
 void dwm_rx_continuous(void) {
-    dwm_raw_frame_t frame;
+    dwm_rx_raw_frame_t frame;
 
     dwt_setrxtimeout(976562);
     dwt_setpreambledetecttimeout(0); 
@@ -136,13 +150,13 @@ void dwm_rx_continuous(void) {
         }
 }
 
-void dwm_rx(dwm_frame_t *result, uint32_t timeout_ms) {
+void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms) {
 
     dwt_setrxtimeout(timeout_ms * 1000);
     dwt_setpreambledetecttimeout(0);
     dwt_rxenable(DWT_START_RX_IMMEDIATE);
 
-    dwm_raw_frame_t frame;
+    dwm_rx_raw_frame_t frame;
     // Wait forever — DW3000 will always eventually post DWM_RX_TIMEOUT
     xQueueReceive(rx_queue, &frame, portMAX_DELAY);
     dwt_forcetrxoff();
@@ -183,5 +197,91 @@ void dwm_rx(dwm_frame_t *result, uint32_t timeout_ms) {
 
         case DWM_RX_TIMEOUT:
             break;
+    }
+}
+
+dwm_tx_event_type_t dwm_tx(dwm_tx_frame_t *frame)
+{
+     dwt_forcetrxoff();
+
+    // Write payload before firing
+    dwt_writetxdata(frame->len + 2, frame->data, 0);
+    dwt_writetxfctrl(frame->len + 2, 0, 1);
+
+    xQueueReset(tx_queue);  // flush stale events
+
+    if (dwt_starttx(DWT_START_TX_IMMEDIATE) == DWT_ERROR) return DWM_TX_LATE;
+
+    // Block until TX done callback fires and posts the timestamp
+    uint64_t ts = 0;
+    if (xQueueReceive(tx_queue, &ts, pdMS_TO_TICKS(10)) != pdTRUE) {
+        return DWM_TX_ERROR;
+    }
+
+    frame->tx_timestamp = ts;
+    return DWM_TX_OK;
+
+}
+
+
+    /*
+    uint32_t tx_time = frame->tx_time;
+    if (frame->tx_time == 0){
+            tx_time = dwt_readsystimestamphi32() + TX_DELAY_500US;
+    }
+
+    if (frame->embed_timestamp) {
+        uint64_t tx_ts = ((uint64_t)tx_time << 8) + dwt_gettxantennadelay();
+        mprintf("TX_TS: %08lX%02X\r\n",
+            (uint32_t)(tx_ts >> 8),    // high 32 bits
+            (uint8_t) (tx_ts & 0xFF)   // low 8 bits
+        );
+        memcpy(&frame->data[frame->ts_position], &tx_ts, 5);
+    }
+    */
+
+    
+
+void dwm_tx_continuous(void)
+{
+    uint8_t msg[18];  // 0xDE 0xAD + counter(1) + timestamp(5) + "HELLOWORLD"(10)
+    const char *text = "HELLOWORLD";
+
+    msg[0] = 0xDE;
+    msg[1] = 0xAD;
+    // msg[2]    = counter
+    // msg[3..7] = previous TX timestamp (5 bytes)
+    // msg[8..17] = "HELLOWORLD"
+    memcpy(&msg[8], text, 10);
+
+    dwm_tx_frame_t frame = {
+        .data         = msg,
+        .len          = sizeof(msg),
+        .tx_timestamp = 0,
+    };
+
+    uint8_t counter = 0;
+
+    while (true)
+    {
+        // Embed counter and previous timestamp into message
+        msg[2] = counter;
+        memcpy(&msg[3], &frame.tx_timestamp, 5);  // previous frame's timestamp
+
+        dwm_tx_event_type_t result = dwm_tx(&frame);  // frame.tx_timestamp updated after send
+
+        if (result == DWM_TX_OK) {
+            mprintf("[%3d] Sent TS: %08lX%02X\r\n",
+                counter,
+                (uint32_t)(frame.tx_timestamp >> 8),
+                (uint8_t) (frame.tx_timestamp & 0xFF));
+        } else if (result == DWM_TX_LATE) {
+            mprintf("[%3d] TX LATE\r\n", counter);
+        } else {
+            mprintf("[%3d] TX ERROR\r\n", counter);
+        }
+
+        counter++;
+        osDelay(1000);
     }
 }

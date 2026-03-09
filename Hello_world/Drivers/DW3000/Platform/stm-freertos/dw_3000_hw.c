@@ -47,12 +47,12 @@
 
 #define DW3000_IRQ_GPIO_Port     DWM_EXTI_GPIO_Port /* e.g. GPIOB */
 #define DW3000_IRQ_Pin           DWM_EXTI_Pin           /* e.g. GPIO_PIN_5 */
-#define DW3000_IRQ_EXTI_IRQn     EXTI1_IRQn   /* e.g. EXTI9_5_IRQn */
+#define DW3000_IRQ_EXTI_IRQn     EXTI0_IRQn   /* e.g. EXTI9_5_IRQn */
 
 /* #define DW3000_HAS_WAKEUP_PIN */
 #ifdef DW3000_HAS_WAKEUP_PIN
-#define DW3000_WAKEUP_GPIO_Port  /* e.g. GPIOC */
-#define DW3000_WAKEUP_Pin        /* e.g. GPIO_PIN_3 */
+#define DW3000_WAKEUP_GPIO_Port  DWM_WAKEUP_GPIO_Port    /* e.g. GPIOC */
+#define DW3000_WAKEUP_Pin        DWM_WAKEUP_Pin            /* e.g. GPIO_PIN_3 */
 #else
 /* CS-based wakeup fallback — only needed if no WAKEUP pin */
 #define DW3000_CS_GPIO_Port      ChipSelect_GPIO_Port/* e.g. GPIOA */
