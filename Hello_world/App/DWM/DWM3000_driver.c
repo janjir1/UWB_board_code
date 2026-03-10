@@ -30,10 +30,6 @@ QueueHandle_t wakeup_queue = NULL;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-#define DWM_CRC_LEN       2U        // DW3000 auto-appends 2-byte CRC to every frame
-#define DWM_RX_TIMEOUT_1S 976562U   // ~1s expressed in UWB symbol ticks (~1µs each)
-#define DWM_ANT_DELAY     16385U    // antenna delay in DWT ticks, applied to TX and RX
-
 static uint16_t s_short_addr = 0;   // IEEE 802.15.4 short address, derived from MCU UID
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
