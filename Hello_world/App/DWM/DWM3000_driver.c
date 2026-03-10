@@ -436,6 +436,54 @@ dwm_tx_event_type_t dwm_tx(dwm_tx_frame_t *frame)
     return DWM_TX_OK;
 }
 
+/*! ------------------------------------------------------------------------------------------------------------------
+ * @brief Transmit a frame at a programmed delayed RMARKER time and block until the TX done callback
+ *        posts the actual TX timestamp.
+ *        Forces TRX off before transmitting to ensure a clean state.
+ *        On success, frame->tx_timestamp is updated with the RMARKER timestamp of the transmitted frame.
+ *
+ * @param frame             Pointer to a dwm_tx_frame_t containing:
+ *                          - data: pointer to payload buffer (must remain valid until function returns)
+ *                          - len:  payload length in bytes (excluding the 2-byte CRC added by hardware)
+ *                          - tx_timestamp: populated on return with the 40-bit TX RMARKER timestamp
+ *
+ * @param final_rmarker_ts  Desired final 40-bit TX RMARKER timestamp, including antenna delay.
+ *
+ * @return DWM_TX_OK     if the frame was transmitted and timestamp received successfully.
+ *         DWM_TX_LATE   if dwt_starttx() returned DWT_ERROR (delayed TX deadline missed).
+ *         DWM_TX_ERROR  if the TX done callback did not fire within 10ms.
+ */
+dwm_tx_event_type_t dwm_tx_delayed(dwm_tx_frame_t *frame, uint64_t final_rmarker_ts, uint32_t wait_ms)
+{
+    const uint64_t TS40_MASK = 0xFFFFFFFFFFULL;
+
+    dwt_forcetrxoff();
+
+    dwt_writetxdata(frame->len + DWM_CRC_LEN, frame->data, 0);
+    dwt_writetxfctrl(frame->len + DWM_CRC_LEN, 0, 1);
+
+    uint16_t tx_ant_delay = dwt_gettxantennadelay();
+
+    // dwt_setdelayedtrxtime() wants raw TX time (without antenna delay),
+    // encoded as the high 32 bits of the 40-bit timestamp.
+    uint64_t raw_tx_time_40 = (final_rmarker_ts - tx_ant_delay) & TS40_MASK;
+    uint32_t delayed_time   = (uint32_t)(raw_tx_time_40 >> 8);
+
+    dwt_setdelayedtrxtime(delayed_time);
+
+    xQueueReset(tx_queue);
+
+    if (dwt_starttx(DWT_START_TX_DELAYED) == DWT_ERROR)
+        return DWM_TX_LATE;
+
+    uint64_t ts = 0;
+    if (xQueueReceive(tx_queue, &ts, pdMS_TO_TICKS(wait_ms)) != pdTRUE)
+        return DWM_TX_ERROR;
+
+    frame->tx_timestamp = ts;
+    return DWM_TX_OK;
+}
+
 // ─── Sleep / Wakeup ───────────────────────────────────────────────────────────
 
 /*! ------------------------------------------------------------------------------------------------------------------
@@ -532,6 +580,48 @@ void dwm_tx_continuous(void)
 
         counter++;
         osDelay(1000);
+    }
+}
+
+#define DWM_TX_BASE_DTU   0x0010C95801ULL
+#define DWM_TX_DELAY_DTU  0x2F9B80000ULL
+
+void dwm_tx_continuous_delayed(void)
+
+{
+    uint8_t msg[18];
+    msg[0] = 0xDE;
+    msg[1] = 0xAD;
+    memcpy(&msg[8], "HELLOWORLD", 10);
+
+    dwm_tx_frame_t frame  = { .data = msg, .len = sizeof(msg), .tx_timestamp = 0 };
+    uint8_t        counter = 0;
+
+    while (true) {
+        msg[2] = counter;
+        memcpy(&msg[3], &frame.tx_timestamp, 5);
+
+        dwm_wakeup();
+        dwm_tx_event_type_t result = dwm_tx_delayed(&frame, DWM_TX_BASE_DTU + DWM_TX_DELAY_DTU, 1000);
+        dwm_sleep();
+
+        switch (result) {
+        case DWM_TX_OK:
+            mprintf("[%3d] Expected TS: %08lX%02X\r\n",
+                counter,
+                (uint32_t)((DWM_TX_BASE_DTU + DWM_TX_DELAY_DTU) >> 8),
+                (uint8_t) ((DWM_TX_BASE_DTU + DWM_TX_DELAY_DTU) & 0xFF));
+            mprintf("[%3d] Sent TS: %08lX%02X\r\n",
+                counter,
+                (uint32_t)(frame.tx_timestamp >> 8),
+                (uint8_t) (frame.tx_timestamp & 0xFF));
+            counter++;
+            break;
+        case DWM_TX_LATE:  mprintf("[%3d] TX LATE\r\n",  counter); break;
+        case DWM_TX_ERROR: mprintf("[%3d] TX ERROR\r\n", counter); break;
+        }
+
+        osDelay(800);
     }
 }
 

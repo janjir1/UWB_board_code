@@ -68,6 +68,7 @@ void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms);
 
 dwm_tx_event_type_t dwm_tx(dwm_tx_frame_t *frame);
 void dwm_tx_continuous(void);
+void dwm_tx_continuous_delayed(void);
 void dwm_rx_continuous_sleep(void);
 
 void dwm_wakeup(void);

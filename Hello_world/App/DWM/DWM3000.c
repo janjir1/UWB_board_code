@@ -51,7 +51,7 @@ void StartDWM(void *argument) {
     osDelay(1000);
 
     if (dwm_get_addr() == 0x506B) {
-        dwm_tx_continuous();   // device A transmits
+        dwm_tx_continuous_delayed();   // device A transmits
     } else {
         dwm_rx_continuous_sleep();
 
