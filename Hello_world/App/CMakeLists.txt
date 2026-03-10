@@ -12,7 +12,7 @@ add_library(app STATIC
 
     # DWM — add files here when ready
     DWM/DWM3000.c
-    DWM/DWM3000_RxTx.c
+    DWM/DWM3000_driver.c
 )
 
 target_include_directories(app PUBLIC

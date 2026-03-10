@@ -32,5 +32,8 @@
                        DWT_INT_SPIRDY_BIT_MASK)
 
 
+#define DWT_DEVICE_ID 0xDECA0302UL      
+#define DWM_PAN_ID 0xDECA
+
 #define DWM_MAX_FRAME_LEN  127
 

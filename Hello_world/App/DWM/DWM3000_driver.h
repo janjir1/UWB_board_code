@@ -8,7 +8,7 @@ extern "C" {
 #include "DWM3000_setup.h"
 
 #define US_TO_DWT_TIME   65536U
-#define MS_TO_DWT_TIME    (US_TO_DWT_TIME * 1000)
+#define MS_TO_DWT_TIME (US_TO_DWT_TIME * 1000ULL)
 
 #define TX_DELAY_500US    (5000U * US_TO_DWT_TIME)
 
@@ -52,9 +52,10 @@ typedef struct {
     uint64_t  tx_timestamp;
 } dwm_tx_frame_t;
 
-extern QueueHandle_t rx_queue;
-extern QueueHandle_t tx_queue;
-extern QueueHandle_t wakeup_queue;
+bool dwm_init(void);
+bool dwm_selftest(void);
+bool dwm_configure(void);
+uint16_t dwm_get_addr(void);
 
 
 void cb_rx_ok(const dwt_cb_data_t *cb_data);
@@ -63,12 +64,11 @@ void cb_rx_to(const dwt_cb_data_t *cb_data);
 void cb_tx_done(const dwt_cb_data_t *cb_data);
 void cb_spi_rdy(const dwt_cb_data_t *cb_data);
 
-void dwm_rx_continuous(void);
 void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms);
 
 dwm_tx_event_type_t dwm_tx(dwm_tx_frame_t *frame);
-void dwm_tx_test(void);
 void dwm_tx_continuous(void);
+void dwm_rx_continuous_sleep(void);
 
 void dwm_wakeup(void);
 void dwm_sleep(void);

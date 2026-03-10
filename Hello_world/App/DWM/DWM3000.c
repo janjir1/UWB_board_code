@@ -15,13 +15,7 @@
 
 #include "DWM3000_setup.h"
 #include "DWM3000.h"
-#include "DWM3000_RxTx.h"
-
-extern SPI_HandleTypeDef hspi1; 
-
-static bool dwm_selfTest(void);
-static bool dwm_init(void);
-static uint16_t dwm_configure(void);
+#include "DWM3000_driver.h"
 
 
 void StartDWM(void *argument) {
@@ -36,7 +30,7 @@ void StartDWM(void *argument) {
     }
     osDelay(1000);
 
-    passed = dwm_selfTest();
+    passed = dwm_selftest();
     if (passed) {
         mprintf("DWM3000 self test passed\r\n");
     } else {
@@ -46,8 +40,8 @@ void StartDWM(void *argument) {
     }
     osDelay(1000);
 
-    uint16_t addr = dwm_configure();
-    if (addr != 0) {
+    passed = dwm_configure();
+    if (passed) {
         mprintf("DWM3000 configured successfully\r\n");
     } else {
         mprintf("DWM3000 configure failed\r\n");
@@ -56,177 +50,15 @@ void StartDWM(void *argument) {
     }
     osDelay(1000);
 
-    if (addr == 0x506B) {
+    if (dwm_get_addr() == 0x506B) {
         dwm_tx_continuous();   // device A transmits
     } else {
-        dwm_rx_frame_t result;
-        while(1){
-            osDelay(900);
-            dwm_rx(&result, 200);
-            if (result.type == DWM_RX_TIMEOUT) {
-                mprintf("Frame timeout\r\n");
-            }
-            else if (result.type == DWM_RX_OK) {
-                mprintf("RX OK %u bytes: ", result.len);
-                    for (uint16_t i = 0; i < result.len; i++) {
-                        mprintf("%c", (result.data[i] >= 32 && result.data[i] < 127)
-                                    ? result.data[i] : '.');
-                }
-                mprintf("\r\n", result.status);
-            }
-            else if (result.type == DWM_RX_ERR) {
-                mprintf("Frame error: 0x%08lX\r\n", result.status);
-            
-            }
-        }
+        dwm_rx_continuous_sleep();
 
     }
 
     vTaskDelete( NULL );
     while(1) { } 
 }
-
-static bool dwm_selfTest(void) {
-
-    uint32_t dev_id = dwt_readdevid();
-
-    if (dev_id != 0xDECA0302UL) {
-        dwm_init();
-        osDelay(10);  
-    }
-    if (dev_id != 0xDECA0302UL) {
-        return false; 
-    }
-
-    uint8_t xtal = dwt_getxtaltrim();
-    if (xtal == 0) {
-        return false;
-    }
-
-    dwt_configeventcounters(1);  // clear & enable
-
-    uint8_t tx_msg[] = {0xC5, 0x00, 0x01, 0x02, 0x03, 0x04};
-    dwt_writetxdata(sizeof(tx_msg), tx_msg, 0);
-    dwt_writetxfctrl(sizeof(tx_msg) + 2, 0, 0);
-    dwt_starttx(DWT_START_TX_IMMEDIATE);
-    osDelay(2);  // give time for frame to finish
-
-    dwt_deviceentcnts_t cnt;
-    dwt_readeventcounters(&cnt);
-    if (cnt.TXF < 1) {
-        return false;      
-    }
-    return true;
-}
-
-static bool dwm_init(void) {
-
-    HAL_NVIC_DisableIRQ(EXTI0_IRQn);
-    dw3000_hw_init();
-    dw3000_hw_reset();
-    osDelay(10);
-
-    extern const struct dwt_probe_s dw3000_probe_interf;
-    if (dwt_probe((struct dwt_probe_s *)&dw3000_probe_interf) != DWT_SUCCESS) {
-        return false;
-    }
-
-    // Poll until chip is in IDLE_RC — do NOT skip this
-    uint32_t timeout = 1000;
-    while (!dwt_checkidlerc()) {
-        osDelay(1);
-        if (--timeout == 0) {
-            mprintf("Idle_RC timeout");
-            return false;
-         // chip never became ready
-        }
-    }
-
-    if (dwt_initialise(DWT_DW_INIT) == DWT_ERROR) {
-        return false;
-    }
-
-
-    dwt_enablespicrccheck(DWT_SPI_CRC_MODE_NO, NULL);
-
-    dw3000_spi_speed_fast();
-
-    __HAL_GPIO_EXTI_CLEAR_IT(DWM_EXTI_Pin);
-    HAL_NVIC_EnableIRQ(EXTI0_IRQn);
-    return true;
-}
-
-static uint16_t dwm_configure(void) {
-
-    static const dwt_config_t config = {
-        .chan            = DWM_UWB_CHANNEL,
-        .txPreambLength  = DWM_UWB_PREAMBLE_LEN,
-        .rxPAC           = DWM_UWB_PAC, 
-        .txCode          = DWM_UWB_TX_CODE, 
-        .rxCode          = DWM_UWB_RX_CODE,
-        .sfdType         = DWM_UWB_SFD_TYPE,  
-        .dataRate        = DWM_UWB_DATA_RATE,
-        .phrMode         = DWM_UWB_PHR_MODE,
-        .phrRate         = DWM_UWB_PHR_RATE,
-        .sfdTO           = DWM_UWB_SFD_TO, 
-        .stsMode         = DWM_UWB_STS_MODE,
-        .stsLength       = DWM_UWB_STS_LENGTH,
-        .pdoaMode        = DWM_UWB_PDOA_MODE,
-    };
-
-    static const dwt_txconfig_t tx_config = {
-        .PGdly   = TX_RF_PGdly,
-        .power   = TX_RF_Power,
-        .PGcount = TX_RF_PGcount,
-    };
-
-    dwt_forcetrxoff();
-
-    int err = dwt_configure((dwt_config_t *)&config);
-    if (err != DWT_SUCCESS) {
-        mprintf("Configuration failed: %d", err);
-        return 0;
-    }
-
-    dwt_configuretxrf((dwt_txconfig_t *)&tx_config);
-
-    dwt_setrxantennadelay(16385);
-    dwt_settxantennadelay(16385);
-
-    uint32_t uid0 = HAL_GetUIDw0();
-    uint32_t uid1 = HAL_GetUIDw1();
-    uint16_t addr = (uint16_t)((uid0 ^ uid1) & 0xFFFF);
-
-    dwt_setpanid(0xDECA);
-    dwt_setaddress16(addr);
-    mprintf("Short addr: 0x%04X\r\n", addr);
-
-    //configure for intrupts
-
-    rx_queue = xQueueCreate(4, sizeof(dwm_rx_raw_frame_t));
-    configASSERT(rx_queue != NULL);
-    tx_queue = xQueueCreate(2, sizeof(uint64_t));
-    configASSERT(tx_queue != NULL);
-    wakeup_queue = xQueueCreate(1, sizeof(uint8_t));
-    configASSERT(wakeup_queue != NULL);
-
-    static dwt_callbacks_s callbacks = {
-    .cbTxDone  = cb_tx_done,
-    .cbRxOk    = cb_rx_ok,
-    .cbRxTo    = cb_rx_to,
-    .cbRxErr   = cb_rx_err,
-    .cbSPIErr  = NULL,
-    .cbSPIRdy  = cb_spi_rdy,
-    };
-
-    dwt_setcallbacks(&callbacks);
-
-    dwt_setinterrupt( DWM_IRQ_MASK, 0,DWT_ENABLE_INT);
-
-    
-
-    return addr;
-}
-
 
 
