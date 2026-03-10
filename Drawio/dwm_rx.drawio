@@ -1,0 +1,110 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.6.1 Chrome/142.0.7444.265 Electron/39.8.0 Safari/537.36" version="29.6.1">
+  <diagram id="C5RBs43oDa-KdzZeNtuy" name="Page-1">
+    <mxGraphModel dx="844" dy="822" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="WIyWlLk6GJQsqaUBKTNV-0" />
+        <mxCell id="WIyWlLk6GJQsqaUBKTNV-1" parent="WIyWlLk6GJQsqaUBKTNV-0" />
+        <mxCell id="4fOX1upVC5spR--_Qvah-3" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="WIyWlLk6GJQsqaUBKTNV-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="4fOX1upVC5spR--_Qvah-0">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="WIyWlLk6GJQsqaUBKTNV-3" parent="WIyWlLk6GJQsqaUBKTNV-1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;glass=0;strokeWidth=1;shadow=0;" value="dwm_rx&lt;div&gt;(timeout [ms])&lt;/div&gt;" vertex="1">
+          <mxGeometry height="40" width="120" x="160" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-2" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="4fOX1upVC5spR--_Qvah-0" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="4fOX1upVC5spR--_Qvah-1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-0" parent="WIyWlLk6GJQsqaUBKTNV-1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;glass=0;strokeWidth=1;shadow=0;" value="Nastavení jak dluho má DWM poslouchat" vertex="1">
+          <mxGeometry height="40" width="120" x="160" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-5" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="4fOX1upVC5spR--_Qvah-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="4fOX1upVC5spR--_Qvah-4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-1" parent="WIyWlLk6GJQsqaUBKTNV-1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;glass=0;strokeWidth=1;shadow=0;" value="Začátek přijímání signálu" vertex="1">
+          <mxGeometry height="40" width="120" x="160" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-12" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="4fOX1upVC5spR--_Qvah-4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="4fOX1upVC5spR--_Qvah-8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-25" connectable="0" parent="4fOX1upVC5spR--_Qvah-12" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="Ano" vertex="1">
+          <mxGeometry relative="1" x="-0.169" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-22" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="4fOX1upVC5spR--_Qvah-4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="280" y="300" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-24" connectable="0" parent="4fOX1upVC5spR--_Qvah-22" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="Neblokující&amp;nbsp;&lt;div&gt;čekání&lt;/div&gt;" vertex="1">
+          <mxGeometry relative="1" x="0.0559" y="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-4" parent="WIyWlLk6GJQsqaUBKTNV-1" style="rhombus;whiteSpace=wrap;html=1;shadow=0;fontFamily=Helvetica;fontSize=12;align=center;strokeWidth=1;spacing=6;spacingTop=-4;" value="Nový objekt&lt;div&gt;v rx_queue?&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="100" x="170" y="320" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-18" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="4fOX1upVC5spR--_Qvah-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="4fOX1upVC5spR--_Qvah-16">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-6" parent="WIyWlLk6GJQsqaUBKTNV-1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;glass=0;strokeWidth=1;shadow=0;" value="&lt;div&gt;Výpočet času přijetí Výpočet RSSI&amp;nbsp;&lt;/div&gt;&lt;div&gt;Výpočet FP power&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="350" y="560" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-13" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="4fOX1upVC5spR--_Qvah-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="4fOX1upVC5spR--_Qvah-11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-26" connectable="0" parent="4fOX1upVC5spR--_Qvah-13" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="Ano" vertex="1">
+          <mxGeometry relative="1" x="-0.0655" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-14" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="4fOX1upVC5spR--_Qvah-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="4fOX1upVC5spR--_Qvah-9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-27" connectable="0" parent="4fOX1upVC5spR--_Qvah-14" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="Ne" vertex="1">
+          <mxGeometry relative="1" x="-0.1617" y="2" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-8" parent="WIyWlLk6GJQsqaUBKTNV-1" style="rhombus;whiteSpace=wrap;html=1;shadow=0;fontFamily=Helvetica;fontSize=12;align=center;strokeWidth=1;spacing=6;spacingTop=-4;" value="Jedná se o&lt;div&gt;ERR frame?&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="100" x="170" y="440" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-15" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="4fOX1upVC5spR--_Qvah-9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="4fOX1upVC5spR--_Qvah-6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-19" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="4fOX1upVC5spR--_Qvah-9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="510" y="480" />
+              <mxPoint x="510" y="650" />
+              <mxPoint x="320" y="650" />
+            </Array>
+            <mxPoint x="320" y="680" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-28" connectable="0" parent="4fOX1upVC5spR--_Qvah-19" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="Ne" vertex="1">
+          <mxGeometry relative="1" x="-0.8708" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-9" parent="WIyWlLk6GJQsqaUBKTNV-1" style="rhombus;whiteSpace=wrap;html=1;shadow=0;fontFamily=Helvetica;fontSize=12;align=center;strokeWidth=1;spacing=6;spacingTop=-4;" value="Jedná se o&lt;div&gt;validní frame?&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="100" x="360" y="440" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-17" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="4fOX1upVC5spR--_Qvah-11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="4fOX1upVC5spR--_Qvah-16">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-11" parent="WIyWlLk6GJQsqaUBKTNV-1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;glass=0;strokeWidth=1;shadow=0;" value="&lt;div&gt;Překlad chyby pro diagnostiku&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="160" y="560" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-16" parent="WIyWlLk6GJQsqaUBKTNV-1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;glass=0;strokeWidth=1;shadow=0;" value="Konec" vertex="1">
+          <mxGeometry height="40" width="120" x="260" y="680" as="geometry" />
+        </mxCell>
+        <mxCell id="4fOX1upVC5spR--_Qvah-21" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" style="endArrow=classic;html=1;rounded=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="290" y="300" as="sourcePoint" />
+            <mxPoint x="220" y="300" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

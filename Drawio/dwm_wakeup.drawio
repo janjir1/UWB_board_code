@@ -1,0 +1,69 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.6.1 Chrome/142.0.7444.265 Electron/39.8.0 Safari/537.36" version="29.6.1">
+  <diagram id="C5RBs43oDa-KdzZeNtuy" name="Page-1">
+    <mxGraphModel dx="699" dy="681" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="WIyWlLk6GJQsqaUBKTNV-0" />
+        <mxCell id="WIyWlLk6GJQsqaUBKTNV-1" parent="WIyWlLk6GJQsqaUBKTNV-0" />
+        <mxCell id="-bjZa3YeV2Fpskemfr-g-0" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="-bjZa3YeV2Fpskemfr-g-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="-bjZa3YeV2Fpskemfr-g-10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="-bjZa3YeV2Fpskemfr-g-1" parent="WIyWlLk6GJQsqaUBKTNV-1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;glass=0;strokeWidth=1;shadow=0;" value="dwm_wakeup(frame)" vertex="1">
+          <mxGeometry height="40" width="120" x="115" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="-bjZa3YeV2Fpskemfr-g-2" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="-bjZa3YeV2Fpskemfr-g-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="-bjZa3YeV2Fpskemfr-g-11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="-bjZa3YeV2Fpskemfr-g-3" connectable="0" parent="-bjZa3YeV2Fpskemfr-g-2" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="Ano" vertex="1">
+          <mxGeometry relative="1" x="-0.031" y="3" as="geometry">
+            <mxPoint x="-3" y="-9" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="-bjZa3YeV2Fpskemfr-g-4" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="-bjZa3YeV2Fpskemfr-g-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="240" y="300" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="-bjZa3YeV2Fpskemfr-g-5" connectable="0" parent="-bjZa3YeV2Fpskemfr-g-4" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" value="Neblokující&lt;div&gt;čekání&lt;/div&gt;" vertex="1">
+          <mxGeometry relative="1" x="0.0253" y="-1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="-bjZa3YeV2Fpskemfr-g-6" parent="WIyWlLk6GJQsqaUBKTNV-1" style="rhombus;whiteSpace=wrap;html=1;shadow=0;fontFamily=Helvetica;fontSize=12;align=center;strokeWidth=1;spacing=6;spacingTop=-4;" value="Nová data v&amp;nbsp;&lt;br&gt;wakeup_queue?" vertex="1">
+          <mxGeometry height="80" width="110" x="120" y="320" as="geometry" />
+        </mxCell>
+        <mxCell id="-bjZa3YeV2Fpskemfr-g-7" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="-bjZa3YeV2Fpskemfr-g-6">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="175" y="270" />
+            </Array>
+            <mxPoint x="180" y="270" as="sourcePoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="-bjZa3YeV2Fpskemfr-g-10" parent="WIyWlLk6GJQsqaUBKTNV-1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;glass=0;strokeWidth=1;shadow=0;" value="Uvedení budícího pinu do HIGH polohy" vertex="1">
+          <mxGeometry height="40" width="120" x="115" y="240" as="geometry" />
+        </mxCell>
+        <mxCell id="-bjZa3YeV2Fpskemfr-g-17" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="-bjZa3YeV2Fpskemfr-g-11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" target="-bjZa3YeV2Fpskemfr-g-14">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="-bjZa3YeV2Fpskemfr-g-11" parent="WIyWlLk6GJQsqaUBKTNV-1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;glass=0;strokeWidth=1;shadow=0;" value="Vypnutí interupt" vertex="1">
+          <mxGeometry height="40" width="120" x="115" y="440" as="geometry" />
+        </mxCell>
+        <mxCell id="-bjZa3YeV2Fpskemfr-g-12" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" style="endArrow=classic;html=1;rounded=0;" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="235" y="300" as="sourcePoint" />
+            <mxPoint x="175" y="300" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="-bjZa3YeV2Fpskemfr-g-13" parent="WIyWlLk6GJQsqaUBKTNV-1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;glass=0;strokeWidth=1;shadow=0;" value="Zapnutí interupt" vertex="1">
+          <mxGeometry height="40" width="120" x="115" y="585" as="geometry" />
+        </mxCell>
+        <mxCell id="-bjZa3YeV2Fpskemfr-g-18" edge="1" parent="WIyWlLk6GJQsqaUBKTNV-1" source="-bjZa3YeV2Fpskemfr-g-14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="-bjZa3YeV2Fpskemfr-g-13">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="-bjZa3YeV2Fpskemfr-g-14" parent="WIyWlLk6GJQsqaUBKTNV-1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;glass=0;strokeWidth=1;shadow=0;" value="Znovuzapsání dat ztracených při vypnutí paměti DWM" vertex="1">
+          <mxGeometry height="50" width="120" x="115" y="510" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
