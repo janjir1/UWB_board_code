@@ -22,6 +22,9 @@
 extern const struct dwt_probe_s dw3000_probe_interf;
 extern SPI_HandleTypeDef hspi1;
 
+//TODO create functions to go to IDLE_RC (cannot track internal time but very fast wakeup and lower
+//power consuption then IDLE [also called IDLE_PLL])
+
 // ─── Queues ───────────────────────────────────────────────────────────────────
 
 QueueHandle_t rx_queue     = NULL;
@@ -42,7 +45,7 @@ static uint16_t s_short_addr = 0;   // IEEE 802.15.4 short address, derived from
  *
  * @return 40-bit timestamp as uint64_t (upper 24 bits are always zero).
  */
-static inline uint64_t ts_buf_to_u64(const uint8_t buf[5])
+uint64_t ts_buf_to_u64(const uint8_t buf[5])
 {
     uint64_t ts = 0;
     for (int i = 0; i < 5; i++)
@@ -373,7 +376,7 @@ void cb_spi_rdy(const dwt_cb_data_t *cb_data)
  *
  * @return None. Check result->type for DWM_RX_OK / DWM_RX_ERR / DWM_RX_TIMEOUT.
  */
-void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms)
+void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms, bool keep_listening)
 {
     dwt_setrxtimeout(timeout_ms * 1000U);
     dwt_setpreambledetecttimeout(0);
@@ -381,7 +384,15 @@ void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms)
 
     dwm_rx_raw_frame_t frame;
     xQueueReceive(rx_queue, &frame, portMAX_DELAY);
-    dwt_forcetrxoff();
+
+    if (keep_listening) {                        // re-arm before processing
+        dwt_setrxtimeout(timeout_ms * 1000U);
+        dwt_rxenable(DWT_START_RX_IMMEDIATE);
+    }
+    else{
+        dwt_forcetrxoff();
+    }
+    
 
     result->type   = frame.type;
     result->status = frame.status;
@@ -647,7 +658,7 @@ void dwm_rx_continuous_sleep(void)
         osDelay(800);
 
         dwm_wakeup();
-        dwm_rx(&result, 400);
+        dwm_rx(&result, 40, false);
         dwm_sleep();
 
         switch (result.type) {

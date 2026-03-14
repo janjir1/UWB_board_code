@@ -52,6 +52,8 @@ typedef struct {
     uint64_t  tx_timestamp;
 } dwm_tx_frame_t;
 
+uint64_t ts_buf_to_u64(const uint8_t buf[5]);
+
 bool dwm_init(void);
 bool dwm_selftest(void);
 bool dwm_configure(void);
@@ -64,7 +66,7 @@ void cb_rx_to(const dwt_cb_data_t *cb_data);
 void cb_tx_done(const dwt_cb_data_t *cb_data);
 void cb_spi_rdy(const dwt_cb_data_t *cb_data);
 
-void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms);
+void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms, bool keep_listening);
 
 dwm_tx_event_type_t dwm_tx(dwm_tx_frame_t *frame);
 void dwm_tx_continuous(void);

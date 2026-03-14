@@ -16,6 +16,7 @@
 #include "DWM3000_setup.h"
 #include "DWM3000.h"
 #include "DWM3000_driver.h"
+#include "../UWB_app/messages.h"
 
 
 void StartDWM(void *argument) {
@@ -50,12 +51,17 @@ void StartDWM(void *argument) {
     }
     osDelay(1000);
 
+    /*
     if (dwm_get_addr() == 0x506B) {
         dwm_tx_continuous_delayed();   // device A transmits
     } else {
         dwm_rx_continuous_sleep();
 
     }
+        */
+
+    msg_run_tests();
+    
 
     vTaskDelete( NULL );
     while(1) { } 

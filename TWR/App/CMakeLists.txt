@@ -13,6 +13,10 @@ add_library(app STATIC
     # DWM — add files here when ready
     DWM/DWM3000.c
     DWM/DWM3000_driver.c
+
+    UWB_app/messages.c
+    UWB_app/uwb_network.c
+    UWB_app/uwb_exchange.c
 )
 
 target_include_directories(app PUBLIC
