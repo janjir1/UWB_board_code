@@ -127,8 +127,17 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
         uint32_t t_start = osKernelGetTickCount();
 
         /* Listen until T_SYNC_RX_ANSWER ms have elapsed */
-        while ((osKernelGetTickCount() - t_start) < T_SYNC_RX_ANSWER) {
-            dwm_rx(&rx_frame, T_SYNC_RX_ANSWER, true);
+        while (1) {
+
+            uint32_t elapsed = osKernelGetTickCount() - t_start;
+
+            if (elapsed >= T_SYNC_RX_ANSWER) {
+                break; 
+            }
+
+            dwm_rx(&rx_frame, T_SYNC_RX_ANSWER - elapsed, true);
+
+            mprintf("\r\n");
 
             switch (rx_frame.type) {
 
@@ -137,7 +146,8 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
                 msg_decode(&rx_frame, &rx_msg);
 
                 if (rx_msg.type == MSG_TYPE_SYNC) {
-
+                    mprintf("Reciever: 0x%04X)\r\n", rx_msg.receiver);
+                    mprintf("OWN id: 0x%04X)\r\n", network_get_ownid());
                     if (rx_msg.receiver == network_get_ownid()) {
                         /* Valid join reply — acknowledge one new peer per cycle */
                         network_add_peer(rx_msg.sender);
@@ -153,7 +163,7 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
                         if (rx_msg.sender > network_get_ownid()) {
                             network_set_master(rx_msg.sender);
                             mprintf("UWB_sync [MASTER] - Yielding to 0x%04X\r\n", rx_msg.sender);
-                            return uwb_sync(seq_num); /* re-enter as slave, one level deep */
+                            return UWB_SYNC_NEW_SLAVE; /* re-enter as slave, one level deep */
                         }
                         /* Own ID is higher — other master should yield on its next cycle */
                         mprintf("UWB_sync [MASTER] - Other master 0x%04X should yield\r\n", rx_msg.sender);
@@ -189,6 +199,7 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
         uint8_t        timeout_count = 0;
 
         while (1) {
+            //osDelay(1);
             dwm_rx(&rx_frame, T_SYNC_RX_SET, true);
 
             switch (rx_frame.type) {
@@ -231,6 +242,7 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
                         if (sync_peer_contains(&rx_msg.data.sync, network_get_ownid())) {
                             /* Own ID present in peer list — device is acknowledged */
                             mprintf("UWB_sync [SLAVE] - Acknowledged by master 0x%04X\r\n", rx_msg.sender);
+                            network_set_acknowledged(true);
                             return UWB_SYNC_SLAVE_ACKNOWLEDGED;
                         } else {
                             /* Not yet in the network — send a join reply */
@@ -246,6 +258,7 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
                     } else {
                         /* SYNC addressed directly to the master — another slave
                          * is replying.  Wait to avoid colliding with it. */
+                        mprintf("UWB_sync [SLAVE] - recieve target 0x%04X\r\n", rx_msg.receiver);
                         mprintf("UWB_sync [SLAVE] - Detected SYNC reply, waiting SYNC_TO_SYNC\r\n");
                         osDelay(SYNC_TO_SYNC);
                     }
@@ -297,13 +310,7 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
                     uwb_id_delay(network_get_ownid());
                     network_set_master(network_get_ownid());
                     mprintf("UWB_sync [SLAVE] - No master found, promoting to master\r\n");
-
-                    if (network_is_master()) {
-                        return uwb_sync(seq_num); /* re-enter as master, one level deep */
-                    } else {
-                        mprintf("UWB_sync [SLAVE] - Master promotion failed\r\n");
-                    }
-                    return UWB_SYNC_NO_MASTER;
+                    return UWB_SYNC_NEW_MASTER;
                 }
                 break;
             }
@@ -390,6 +397,7 @@ static bool uwb_sync_to_allid(uint8_t seq_num)
     dwm_tx_frame_t tx_frame = msg_encode(&tx_msg);
 
     if (dwm_tx(&tx_frame) != DWM_TX_OK) {
+
         mprintf("UWB_sync [MASTER] - SYNC send failed, retrying\r\n");
         if (dwm_tx(&tx_frame) != DWM_TX_OK) {
             mprintf("UWB_sync [MASTER] - SYNC retry failed\r\n");

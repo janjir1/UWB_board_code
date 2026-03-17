@@ -378,6 +378,7 @@ void cb_spi_rdy(const dwt_cb_data_t *cb_data)
  */
 void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms, bool keep_listening)
 {
+    dwt_forcetrxoff();
     dwt_setrxtimeout(timeout_ms * 1000U);
     dwt_setpreambledetecttimeout(0);
     dwt_rxenable(DWT_START_RX_IMMEDIATE);
@@ -385,7 +386,7 @@ void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms, bool keep_listening)
     dwm_rx_raw_frame_t frame;
     xQueueReceive(rx_queue, &frame, portMAX_DELAY);
 
-    if (keep_listening) {                        // re-arm before processing
+    if (keep_listening && frame.type == DWM_RX_OK) {                        // re-arm before processing
         dwt_setrxtimeout(timeout_ms * 1000U);
         dwt_rxenable(DWT_START_RX_IMMEDIATE);
     }

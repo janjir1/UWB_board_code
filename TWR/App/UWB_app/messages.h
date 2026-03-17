@@ -34,7 +34,7 @@ extern "C" {
 #define MSG_OFFSET_RECEIVER     (MSG_START_LOCATION + 3)
 
 /** @brief Total length of the message header in bytes (type + sender + receiver). */
-#define MSG_HEADER_LEN          (MSG_START_LOCATION + 3 + MSG_START_LOCATION)
+#define MSG_HEADER_LEN          (MSG_OFFSET_RECEIVER + 2)
 
 /* ── Timestamp ──────────────────────────────────────────────────────────── */
 

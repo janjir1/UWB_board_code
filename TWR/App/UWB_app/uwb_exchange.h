@@ -23,7 +23,10 @@ typedef enum {
     UWB_SYNC_SLAVE_ACKNOWLEDGED,/* Own ID was seen in master's peer list */
     UWB_SYNC_SLAVE_PENDING,     /* Replied to master but not yet acknowledged */
     UWB_SYNC_SLAVE_REPLY_FAILED,/* Tried to reply but TX failed twice */
-    UWB_SYNC_NO_MASTER,         /* Timed out, promoted self to master */
+    UWB_SYNC_NEW_MASTER,         /* Timed out, promoted self to master */
     UWB_SYNC_TX_FAILED,         /* Master could not transmit SYNC at all */
     UWB_SYNC_MASTER_NO_REPLY,
+    UWB_SYNC_NEW_SLAVE,
 } uwb_sync_result_t;
+
+uwb_sync_result_t uwb_sync(uint8_t seq_num);
