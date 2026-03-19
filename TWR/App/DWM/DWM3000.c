@@ -19,6 +19,12 @@
 #include "../UWB_app/uwb_exchange.h"
 #include "../UWB_app/uwb_network.h"
 
+#define U64_HI(x)  ((uint32_t)((x) >> 32))
+#define U64_LO(x)  ((uint32_t)((x) & 0xFFFFFFFFU))
+#define MPRINT_TS(label, val) \
+    mprintf("UWB_eTWR_TEST - %-20s: 0x%08lX%08lX\r\n", (label), U64_HI(val), U64_LO(val))
+
+
 
 void StartDWM(void *argument) {
     mprintf("Starting DWM3000 task\r\n");
@@ -70,36 +76,9 @@ void StartDWM(void *argument) {
         mprintf("Starting sync\r\n");
         uwb_sync_result_t result = uwb_sync(seq++);
         mprintf("Sync result: %d\r\n", result);
+        uwb_twr_test(seq, result);
+        osDelay(500);
         
-        switch(result) {
-            case UWB_SYNC_MASTER:
-            case UWB_SYNC_MASTER_NO_REPLY:
-                osDelay(100); // Master broadcasts every 100ms
-                break;
-                
-            case UWB_SYNC_SLAVE_ACKNOWLEDGED:
-                mprintf("Fully synced! Pausing sync to start TWR...\r\n");
-                osDelay(100); // Or transition to ranging task
-                break;
-                
-            case UWB_SYNC_SLAVE_PENDING:
-                break;
-            case UWB_SYNC_SLAVE_REPLY_FAILED:
-                // Instantly loop to wait for next Master SYNC
-                break;
-                
-            case UWB_SYNC_NEW_MASTER:
-                // Promoted. Loop immediately to run Master branch
-                break;
-                
-            case UWB_SYNC_TX_FAILED:
-                osDelay(1000); // Backoff on hardware error
-                break;
-
-            case UWB_SYNC_NEW_SLAVE:
-                // Demoted. Loop immediately to run Master branch
-                break;
-        }
     
     }
     
@@ -107,5 +86,6 @@ void StartDWM(void *argument) {
     vTaskDelete( NULL );
     while(1) { } 
 }
+
 
 

@@ -170,7 +170,7 @@ static uint16_t msg_encode_sync(const msg_sync_t *in, uint8_t *buf)
 /**
  * @brief Decode a POLL message payload.
  *
- * Extracts the sequence number and the initiator's predicted TX timestamp.
+ * Extracts the sequence number.
  * RSSI and first-path power are taken from the frame metadata, not the
  * wire payload.
  *
@@ -180,10 +180,10 @@ static uint16_t msg_encode_sync(const msg_sync_t *in, uint8_t *buf)
 static void msg_decode_poll(const dwm_rx_frame_t *frame, msg_poll_t *out)
 {
     out->seq_num             = frame->data[MSG_PAYLOAD_OFFSET_SEQ];
-    out->poll_tx_expected_ts = ts_buf_to_u64(&frame->data[MSG_PAYLOAD_OFFSET_TS_0]);
     /* -- Not in message: populated from RX frame metadata -- */
     out->poll_rssi_q8        = frame->rssi_q8;
     out->poll_fp_q8          = frame->fp_q8;
+    out->poll_ts             = frame->rx_timestamp;
 }
 
 /**
@@ -191,7 +191,7 @@ static void msg_decode_poll(const dwm_rx_frame_t *frame, msg_poll_t *out)
  *
  * Wire layout:
  * @code
- * [SEQ] 1 byte | [poll_tx_expected_ts] 5 bytes
+ * [SEQ] 1 byte
  * @endcode
  *
  * @note poll_rssi_q8 and poll_fp_q8 are not transmitted —
@@ -204,8 +204,7 @@ static void msg_decode_poll(const dwm_rx_frame_t *frame, msg_poll_t *out)
 static uint16_t msg_encode_poll(const msg_poll_t *in, uint8_t *buf)
 {
     buf[MSG_PAYLOAD_OFFSET_SEQ] = in->seq_num;
-    u64_to_ts_buf(in->poll_tx_expected_ts, &buf[MSG_PAYLOAD_OFFSET_TS_0]);
-    return MSG_PAYLOAD_OFFSET_TS_0 + MSG_TS_LEN;
+    return MSG_PAYLOAD_OFFSET_SEQ + 1;
 }
 
 /**
@@ -223,6 +222,7 @@ static void msg_decode_response(const dwm_rx_frame_t *frame, msg_response_t *out
     /* -- Not in message: populated from RX frame metadata -- */
     out->response_rssi_q8 = frame->rssi_q8;
     out->response_fp_q8   = frame->fp_q8;
+    out->response_ts             = frame->rx_timestamp;
 }
 
 /**
@@ -265,15 +265,16 @@ static uint16_t msg_encode_response(const msg_response_t *in, uint8_t *buf)
 static void msg_decode_final(const dwm_rx_frame_t *frame, msg_final_t *out)
 {
     out->seq_num              = frame->data[MSG_PAYLOAD_OFFSET_SEQ];
-    out->poll_tx_real_ts      = ts_buf_to_u64(&frame->data[MSG_PAYLOAD_OFFSET_TS_0]);
+    out->poll_tx_ts           = ts_buf_to_u64(&frame->data[MSG_PAYLOAD_OFFSET_TS_0]);
     out->resp_rx_ts           = ts_buf_to_u64(&frame->data[MSG_PAYLOAD_OFFSET_TS_1]);
-    out->final_tx_expected_ts = ts_buf_to_u64(&frame->data[MSG_PAYLOAD_OFFSET_TS_2]);
+    out->final_tx_ts = ts_buf_to_u64(&frame->data[MSG_PAYLOAD_OFFSET_TS_2]);
     /* -- Sent by initiator: quality of RESPONSE as seen by initiator -- */
     memcpy(&out->resp_rssi_q8, &frame->data[MSG_PAYLOAD_OFFSET_RESP_RSSI], sizeof(int16_t));
     memcpy(&out->resp_fp_q8,   &frame->data[MSG_PAYLOAD_OFFSET_RESP_FP],   sizeof(int16_t));
     /* -- Not in message: quality of FINAL as seen by responder -- */
     out->final_rssi_q8        = frame->rssi_q8;
     out->final_fp_q8          = frame->fp_q8;
+    out->final_ts             = frame->rx_timestamp;
 }
 
 /**
@@ -299,9 +300,9 @@ static void msg_decode_final(const dwm_rx_frame_t *frame, msg_final_t *out)
 static uint16_t msg_encode_final(const msg_final_t *in, uint8_t *buf)
 {
     buf[MSG_PAYLOAD_OFFSET_SEQ] = in->seq_num;
-    u64_to_ts_buf(in->poll_tx_real_ts,      &buf[MSG_PAYLOAD_OFFSET_TS_0]);
+    u64_to_ts_buf(in->poll_tx_ts,      &buf[MSG_PAYLOAD_OFFSET_TS_0]);
     u64_to_ts_buf(in->resp_rx_ts,           &buf[MSG_PAYLOAD_OFFSET_TS_1]);
-    u64_to_ts_buf(in->final_tx_expected_ts, &buf[MSG_PAYLOAD_OFFSET_TS_2]);
+    u64_to_ts_buf(in->final_tx_ts, &buf[MSG_PAYLOAD_OFFSET_TS_2]);
     memcpy(&buf[MSG_PAYLOAD_OFFSET_RESP_RSSI], &in->resp_rssi_q8, sizeof(int16_t));
     memcpy(&buf[MSG_PAYLOAD_OFFSET_RESP_FP],   &in->resp_fp_q8,   sizeof(int16_t));
     return MSG_PAYLOAD_OFFSET_RESP_FP + sizeof(int16_t);
@@ -319,7 +320,9 @@ static dwm_rx_frame_t make_rx_frame(const dwm_tx_frame_t *tx, int16_t rssi, int1
     return rx;
 }
 
-/* Helper macro to print a 40-bit timestamp as two 32-bit halves */
+#ifdef UWB_DEBUG
+//This function may not work properly due to changes in messages.h, function was only fixed so it compiles
+//Helper macro to print a 40-bit timestamp as two 32-bit halves 
 #define MPRINT_TS(label, ts) \
     mprintf(label "0x%08lX%08lX", (uint32_t)((ts) >> 32), (uint32_t)((ts) & 0xFFFFFFFF))
 
@@ -347,7 +350,7 @@ static void test_poll(void)
         .type      = MSG_TYPE_POLL,
         .sender    = 0x0033,
         .receiver  = 0x0044,
-        .data.poll = { .seq_num = 0x05, .poll_tx_expected_ts = 0x000000123456789AULL }
+        .data.poll = { .seq_num = 0x05}
     };
 
     dwm_tx_frame_t tx_frame = msg_encode(&tx_msg);
@@ -355,9 +358,9 @@ static void test_poll(void)
     msg_t rx_msg;
     msg_decode(&rx_frame, &rx_msg);
 
-    mprintf("POLL  IN:  seq=0x%02X\r\n", tx_msg.data.poll.seq_num); MPRINT_TS("POLL  IN:  ts=", tx_msg.data.poll.poll_tx_expected_ts); mprintf("\r\n");
+    mprintf("POLL  IN:  seq=0x%02X\r\n", tx_msg.data.poll.seq_num);  mprintf("\r\n");
     mprintf("POLL  OUT: seq=0x%02X  ts=", rx_msg.data.poll.seq_num);
-    MPRINT_TS("", rx_msg.data.poll.poll_tx_expected_ts);
+    MPRINT_TS("", rx_msg.data.poll.poll_ts);
     mprintf("  rssi=%d  fp=%d\r\n\r\n", rx_msg.data.poll.poll_rssi_q8, rx_msg.data.poll.poll_fp_q8);
 }
 
@@ -390,9 +393,9 @@ static void test_final(void)
         .receiver   = 0x0088,
         .data.final = {
             .seq_num              = 0x09,
-            .poll_tx_real_ts      = 0x0000001111111111ULL,
+            .poll_tx_ts      = 0x0000001111111111ULL,
             .resp_rx_ts           = 0x0000002222222222ULL,
-            .final_tx_expected_ts = 0x0000003333333333ULL,
+            .final_tx_ts = 0x0000003333333333ULL,
             .resp_rssi_q8         = -400,
             .resp_fp_q8           = -200,
         }
@@ -404,22 +407,22 @@ static void test_final(void)
     msg_decode(&rx_frame, &rx_msg);
 
     mprintf("FINAL IN:  seq=0x%02X\r\n", tx_msg.data.final.seq_num);
-    MPRINT_TS("  poll_tx=",  tx_msg.data.final.poll_tx_real_ts);      mprintf("\r\n");
+    MPRINT_TS("  poll_tx=",  tx_msg.data.final.poll_tx_ts);      mprintf("\r\n");
     MPRINT_TS("  resp_rx=",  tx_msg.data.final.resp_rx_ts);           mprintf("\r\n");
-    MPRINT_TS("  final_tx=", tx_msg.data.final.final_tx_expected_ts); mprintf("\r\n");
+    MPRINT_TS("  final_tx=", tx_msg.data.final.final_tx_ts); mprintf("\r\n");
     mprintf("  resp_rssi=%d  resp_fp=%d\r\n", tx_msg.data.final.resp_rssi_q8, tx_msg.data.final.resp_fp_q8);
 
     mprintf("FINAL OUT: seq=0x%02X\r\n", rx_msg.data.final.seq_num);
-    MPRINT_TS("  poll_tx=",  rx_msg.data.final.poll_tx_real_ts);      mprintf("\r\n");
+    MPRINT_TS("  poll_tx=",  rx_msg.data.final.poll_tx_ts);      mprintf("\r\n");
     MPRINT_TS("  resp_rx=",  rx_msg.data.final.resp_rx_ts);           mprintf("\r\n");
-    MPRINT_TS("  final_tx=", rx_msg.data.final.final_tx_expected_ts); mprintf("\r\n");
+    MPRINT_TS("  final_tx=", rx_msg.data.final.final_tx_ts); mprintf("\r\n");
     mprintf("  resp_rssi=%d  resp_fp=%d\r\n",   rx_msg.data.final.resp_rssi_q8,  rx_msg.data.final.resp_fp_q8);
     mprintf("  final_rssi=%d  final_fp=%d\r\n\r\n", rx_msg.data.final.final_rssi_q8, rx_msg.data.final.final_fp_q8);
 }
 
-/**
- * @brief Run all message encode/decode roundtrip tests.
- */
+
+//@brief Run all message encode/decode roundtrip tests.
+ 
 void msg_run_tests(void)
 {
     mprintf("=== msg roundtrip tests ===\r\n\r\n");
@@ -429,3 +432,5 @@ void msg_run_tests(void)
     test_final();
     mprintf("=== tests done ===\r\n");
 }
+
+#endif

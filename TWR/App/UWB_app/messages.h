@@ -116,10 +116,10 @@ typedef struct {
  */
 typedef struct {
     uint8_t  seq_num;              /**< Sequence number. */
-    uint64_t poll_tx_expected_ts;  /**< Predicted TX timestamp of this POLL (40-bit, little-endian). */
     /*-- Not in message --*/
     int16_t  poll_rssi_q8;         /**< RSSI of the received POLL (Q8 fixed-point). */
     int16_t  poll_fp_q8;           /**< First-path power of the received POLL (Q8 fixed-point). */
+    uint64_t poll_ts;
 } msg_poll_t;
 
 /**
@@ -138,6 +138,7 @@ typedef struct {
     /*-- Not in message --*/
     int16_t  response_rssi_q8;    /**< RSSI of the received RESPONSE (Q8 fixed-point). */
     int16_t  response_fp_q8;      /**< First-path power of the received RESPONSE (Q8 fixed-point). */
+    uint64_t response_ts;
 } msg_response_t;
 
 /**
@@ -152,14 +153,15 @@ typedef struct {
  */
 typedef struct {
     uint8_t  seq_num;               /**< Sequence number. */
-    uint64_t poll_tx_real_ts;       /**< Actual TX timestamp of the POLL (40-bit, little-endian). */
+    uint64_t poll_tx_ts;       /**< Actual TX timestamp of the POLL (40-bit, little-endian). */
     uint64_t resp_rx_ts;            /**< RX timestamp of the RESPONSE at the initiator (40-bit). */
-    uint64_t final_tx_expected_ts;  /**< Predicted TX timestamp of this FINAL (40-bit). */
+    uint64_t final_tx_ts;  /**< Predicted TX timestamp of this FINAL (40-bit). */
     int16_t  resp_rssi_q8;          /**< RSSI measured by initiator on RESPONSE reception (Q8). */
     int16_t  resp_fp_q8;            /**< First-path power on RESPONSE reception at initiator (Q8). */
     /*-- Not in message --*/
     int16_t  final_rssi_q8;         /**< RSSI of the received FINAL at responder (Q8). */
     int16_t  final_fp_q8;           /**< First-path power of the received FINAL at responder (Q8). */
+    uint64_t final_ts;
 } msg_final_t;
 
 /* ── Unified decoded message container ─────────────────────────────────── */
@@ -186,7 +188,7 @@ typedef struct {
     } data;
 } msg_t;
 
-void msg_run_tests(void);
+//void msg_run_tests(void);
 
 void msg_decode(const dwm_rx_frame_t *receive_frame, msg_t *msg_decoded);
 dwm_tx_frame_t msg_encode(const msg_t *msg);

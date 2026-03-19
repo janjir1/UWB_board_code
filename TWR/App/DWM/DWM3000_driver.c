@@ -548,6 +548,7 @@ void dwm_wakeup(void)
     dwm_restore_runtime(s_short_addr);
 }
 
+#ifdef UWB_DEBUG
 // ─── Test: continuous TX/RX with sleep ───────────────────────────────────────────
 
 /*! ------------------------------------------------------------------------------------------------------------------
@@ -681,3 +682,5 @@ void dwm_rx_continuous_sleep(void)
         }
     }
 }
+
+#endif
