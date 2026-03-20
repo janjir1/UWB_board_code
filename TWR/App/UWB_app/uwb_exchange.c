@@ -144,6 +144,11 @@ static bool sync_peer_contains(const msg_sync_t *sync, uint16_t id)
 
 uwb_sync_result_t uwb_sync(uint8_t seq_num)
 {
+
+    dwt_writesysstatuslo(DWT_INT_RXFTO_BIT_MASK    |   /* RX frame wait timeout */
+                            DWT_INT_RXPTO_BIT_MASK);    /* RX SFD timeout */;
+    dwm_rx_flush();
+
     if (network_is_master()) {
         osDelay(2);
 
@@ -273,7 +278,7 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
                     } else {
                         mprintf("UWBsync [SLAVE] - Detected SYNC reply, waiting %d ms\r\n",
                                 T_SYNC_TO_SYNC);
-                        osDelay(T_SYNC_TO_SYNC);
+                        //osDelay(T_SYNC_TO_SYNC);
                     }
                     break;
 
@@ -283,18 +288,18 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
 
                 case MSG_TYPE_POLL:
                     mprintf("UWBsync [SLAVE] - Detected POLL, waiting %d ms\r\n", T_POLL_TO_SYNC);
-                    osDelay(T_POLL_TO_SYNC);
+                    //osDelay(T_POLL_TO_SYNC);
                     break;
 
                 case MSG_TYPE_RESPONSE:
                     mprintf("UWBsync [SLAVE] - Detected RESPONSE, waiting %d ms\r\n",
                             T_RESPONSE_TO_SYNC);
-                    osDelay(T_RESPONSE_TO_SYNC);
+                    //osDelay(T_RESPONSE_TO_SYNC);
                     break;
 
                 case MSG_TYPE_FINAL:
                     mprintf("UWBsync [SLAVE] - Detected FINAL, waiting %d ms\r\n", T_FINAL_TO_SYNC);
-                    osDelay(T_FINAL_TO_SYNC);
+                    //osDelay(T_FINAL_TO_SYNC);
                     break;
 
                 default:
@@ -495,6 +500,8 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
                             mprintf("UWB_eTWR [SLAVE] - POLL observed passively (initiator: 0x%04X, target: 0x%04X)\r\n",
                                     rx_msg.sender, rx_msg.receiver);
                             network_set_obs_poll_rx(&RX_MEAS_FROM_FRAME(rx_frame));
+                            //delay to cleanly add all the messages to the queue, no need to act on it
+                            osDelay(1);
                         }
                         break;
 
@@ -505,7 +512,6 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
                                     rx_msg.receiver);
                             return UWB_TWR_UNEXPECTED_MASTER;
                         }
-
                         if (network_is_acknowledged()) {
                             mprintf("UWB_eTWR [SLAVE] - RESPONSE observed passively\r\n");
                             network_set_obs_resp_rx(&RX_MEAS_FROM_FRAME(rx_frame));
@@ -544,10 +550,11 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
                             /* Passive observer — full set of three frames captured */
                             mprintf("UWB_eTWR [SLAVE] - FINAL observed passively\r\n");
                             network_set_obs_final_rx(&RX_MEAS_FROM_FRAME(rx_frame));
+                            network_set_master(rx_msg.receiver);
                             return uwb_tdoa_sender(seq_num);
 
                         } else {
-                            /* Not the target and not acknowledged — uninvolved */
+                            
                             return UWB_TWR_NOTHING;
                         }
                         /* break not reached */

@@ -23,7 +23,7 @@ extern "C" {
  *  Shorter = faster sync cycle. Must cover worst-case slave reply delay
  *  (id-based stagger = up to 9 ms) plus one UWB frame air time (~0.3 ms).
  *  TODO: reduce once per-device stagger is tuned. */
-#define T_SYNC_RX_ANSWER       50U            /* ms */
+#define T_SYNC_RX_ANSWER       20U            /* ms */
 
 /** @brief Slave delay after detecting a POLL — avoids corrupting an
  *  ongoing TWR exchange before transmitting own SYNC reply.

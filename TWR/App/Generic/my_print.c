@@ -28,18 +28,26 @@ static void ensure_queue_init(void)
 
 void mprintf(const char *format, ...)
 {
-    //ensure_queue_init();
-
     print_msg_t msg;
+
+    /* Prepend timestamp */
+    uint32_t tick = osKernelGetTickCount();
+    int prefix_len = snprintf(msg.data, PRINT_BUF_SIZE, "[%8lu] ", tick);
+    if (prefix_len < 0) prefix_len = 0;
+
+    /* Append formatted message into remaining buffer space */
     va_list args;
     va_start(args, format);
-    int len = vsnprintf(msg.data, PRINT_BUF_SIZE, format, args);
+    int body_len = vsnprintf(msg.data + prefix_len,
+                             PRINT_BUF_SIZE - prefix_len,
+                             format, args);
     va_end(args);
 
-    if (len <= 0) return;
-    msg.len = (uint16_t)(len < PRINT_BUF_SIZE ? len : PRINT_BUF_SIZE - 1);
+    if (body_len <= 0) return;
 
-    /* Non-blocking put — drop message if queue is full rather than stalling caller */
+    int total = prefix_len + body_len;
+    msg.len = (uint16_t)(total < PRINT_BUF_SIZE ? total : PRINT_BUF_SIZE - 1);
+
     osMessageQueuePut(s_print_queue, &msg, 0, 0);
 }
 
