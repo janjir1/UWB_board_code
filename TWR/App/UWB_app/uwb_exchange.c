@@ -387,7 +387,7 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
 
             uint16_t target_id = network_get_highest_uncertainty();
             mprintf("UWB_eTWR [MASTER] - Ranging target: 0x%04X\r\n", target_id);
-
+            osDelay(1); //wait for other to start listening
             if (!uwb_send_POLL(seq_num, target_id)) {
                 mprintf("UWB_eTWR [MASTER] - Failed to send POLL\r\n");
                 return UWB_TWR_TX_FAILED;
@@ -446,6 +446,7 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
 
                 case DWM_RX_TIMEOUT:
                     mprintf("UWB_eTWR [MASTER] - RESPONSE window closed\r\n");
+                    network_remove_peer(target_id);
                     return UWB_TWR_TIMEOUT;
                 }
             }
@@ -887,7 +888,7 @@ static uwb_etwr_result_t uwb_tdoa_sender(uint8_t seq_num)
 
  */
  //TODO: remove or gate behind a DEBUG compile flag before production.
-void uwb_twr_test(uint8_t seq_num, uwb_sync_result_t sync_result)
+uwb_etwr_result_t uwb_twr_test(uint8_t seq_num, uwb_sync_result_t sync_result)
 {
     mprintf("UWB_eTWR_TEST - Starting exchange (seq=%d, sync=%d)\r\n", seq_num, sync_result);
 
@@ -907,7 +908,7 @@ void uwb_twr_test(uint8_t seq_num, uwb_sync_result_t sync_result)
 
     if (result != UWB_TWR_EXCHANGE_COMPLETE &&
         result != UWB_TWR_RECEIVED         &&
-        result != UWB_TWR_RECEIVED_PASSIVE) return;
+        result != UWB_TWR_RECEIVED_PASSIVE) return result;
 
     const twr_timestamps_t *twr = network_get_twr();
 
@@ -933,6 +934,8 @@ void uwb_twr_test(uint8_t seq_num, uwb_sync_result_t sync_result)
     mprintf("UWB_eTWR_TEST - ---- Role: %s ----\r\n",
             (twr->poll_tx      != 0) ? "INITIATOR" :
             (twr->poll_rx.ts   != 0) ? "RESPONDER" : "UNKNOWN");
+
+    return result;
 }
 
 #endif

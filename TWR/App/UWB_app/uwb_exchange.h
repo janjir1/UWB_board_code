@@ -114,7 +114,7 @@ typedef enum {
 
 uwb_sync_result_t  uwb_sync(uint8_t seq_num);
 uwb_etwr_result_t  uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_result);
-void uwb_twr_test(uint8_t seq_num, uwb_sync_result_t sync_result);
+uwb_etwr_result_t uwb_twr_test(uint8_t seq_num, uwb_sync_result_t sync_result);
 
 #ifdef __cplusplus
 }
