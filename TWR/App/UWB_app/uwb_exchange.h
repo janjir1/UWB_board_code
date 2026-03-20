@@ -11,12 +11,13 @@ extern "C" {
  * All _TICKS values are DW3xxx 40-bit counter units (~15.65 ps per tick).
  * TODO: Tune all constants against real hardware measurements.
  * ----------------------------------------------------------------------- */
-
+#define T_PERIOD = 500
+#define DEEP_SLEEP = 500
 /** @brief Slave RX window for the initial SYNC broadcast.
  *  Must be longer than the longest inter-sync sleep interval. */
 #define T_SYNC_RX_SET          1000U          /* ms */
 
-//TODO: Tune all constants against real hardware measurements.
+//TODO: Tune all constants against real hardware measurements. - dont do that, i gave up
 
 /** @brief Master RX window waiting for slave join replies after SYNC.
  *  Shorter = faster sync cycle. Must cover worst-case slave reply delay

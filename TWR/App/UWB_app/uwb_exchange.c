@@ -133,22 +133,33 @@ static bool sync_peer_contains(const msg_sync_t *sync, uint16_t id)
  * @retval UWB_SYNC_NEW_SLAVE         Yielded to a higher-ID master.
  * @retval UWB_SYNC_TX_FAILED         SYNC TX failed at hardware level.
  */
+/** Pad remaining time so this function always exits exactly
+ *  T_SYNC_RX_ANSWER ms after t_start, regardless of which path was taken. */
+#define SYNC_PAD(t_start)                                            \
+    do {                                                             \
+        uint32_t _e = osKernelGetTickCount() - (t_start);           \
+        if (_e < T_SYNC_RX_ANSWER) osDelay(T_SYNC_RX_ANSWER - _e); \
+    } while (0)
+
+
 uwb_sync_result_t uwb_sync(uint8_t seq_num)
 {
     if (network_is_master()) {
+        osDelay(2);
 
         /* ---- MASTER: broadcast SYNC then collect one reply ---- */
         if (!uwb_sync_to_all_id(seq_num)) {
             mprintf("UWBsync [MASTER] - Failed to send SYNC, aborting\r\n");
-            return UWB_SYNC_TX_FAILED;
+            return UWB_SYNC_TX_FAILED;        /* TX never happened — no padding */
         }
 
-        dwm_rx_frame_t rx_frame = {0};
+        /* t_start anchored to SYNC transmission */
         uint32_t t_start = osKernelGetTickCount();
+        dwm_rx_frame_t rx_frame = {0};
 
         while (1) {
             uint32_t elapsed = osKernelGetTickCount() - t_start;
-            if (elapsed >= T_SYNC_RX_ANSWER) break;
+            if (elapsed >= T_SYNC_RX_ANSWER) break;          /* window expired */
 
             dwm_rx(&rx_frame, T_SYNC_RX_ANSWER - elapsed, true);
 
@@ -164,38 +175,39 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
                 }
 
                 if (rx_msg.receiver == network_get_ownid()) {
-                    /* Valid join reply — acknowledge one new peer per cycle */
+                    /* Valid join reply */
                     network_add_peer(rx_msg.sender);
                     mprintf("UWBsync [MASTER] - Peer 0x%04X acknowledged\r\n", rx_msg.sender);
+                    SYNC_PAD(t_start);
                     return UWB_SYNC_MASTER;
 
                 } else {
-                    /* SYNC from another master — dual-master conflict.
-                     * Higher ID wins; loser demotes and re-enters as slave. */
+                    /* Dual-master conflict */
                     mprintf("UWBsync [MASTER] - Dual master detected sender 0x%04X\r\n",
                             rx_msg.sender);
                     if (rx_msg.sender > network_get_ownid()) {
                         network_set_master(rx_msg.sender);
                         mprintf("UWBsync [MASTER] - Yielding to 0x%04X\r\n", rx_msg.sender);
+                        SYNC_PAD(t_start);
                         return UWB_SYNC_NEW_SLAVE;
                     }
-                    /* Own ID is higher — other master should yield on its next cycle */
                     mprintf("UWBsync [MASTER] - Other master 0x%04X should yield\r\n",
                             rx_msg.sender);
                 }
                 break;
             }
+
             case DWM_RX_ERR:
                 mprintf("UWBsync [MASTER] - RX error 0x%08lX\r\n", rx_frame.status);
                 break;
 
             case DWM_RX_TIMEOUT:
-                mprintf("UWBsync [MASTER] - SYNC window closed\r\n");
-                return UWB_SYNC_MASTER_NO_REPLY;
+                break;    /* let while() decide — don't return early */
             }
         }
 
-        mprintf("UWBsync [MASTER] - SYNC window closed (time elapsed)\r\n");
+        /* Window expired naturally — already at T_SYNC_RX_ANSWER, no pad needed */
+        mprintf("UWBsync [MASTER] - SYNC window closed\r\n");
         return UWB_SYNC_MASTER_NO_REPLY;
 
     } else {
@@ -205,9 +217,7 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
         uint8_t timeout_count = 0;
 
         while (1) {
-            /* Small yield before RX to prevent starvation of other tasks */
             osDelay(1);
-
             dwm_rx(&rx_frame, T_SYNC_RX_SET, true);
 
             switch (rx_frame.type) {
@@ -219,45 +229,48 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
 
                 case MSG_TYPE_SYNC:
                     if (rx_msg.receiver == ALL_ID) {
-                        /* Validate sender — reject rogue masters with lower ID */
+
+                        /* t_start anchored to SYNC receipt */
+                        uint32_t t_start = osKernelGetTickCount();
+
+                        /* Validate / update master */
                         if (rx_msg.sender != network_get_master()) {
                             if (rx_msg.sender > network_get_master()) {
-                                /* Higher-ID master takes over */
                                 network_set_master(rx_msg.sender);
                                 mprintf("UWBsync [SLAVE] - New master 0x%04X\r\n", rx_msg.sender);
                                 network_update_peers_from_sync(rx_msg.sender,
                                                                rx_msg.data.sync.peer_ids,
                                                                rx_msg.data.sync.peer_count);
                             } else {
-                                /* Rogue lower-ID master — discard */
                                 mprintf("UWBsync [SLAVE] - Unexpected master 0x%04X, expected 0x%04X\r\n",
                                         rx_msg.sender, network_get_master());
-                                break;
+                                break;   /* discard — t_start not used, loop again */
                             }
                         } else {
-                            /* Known master — refresh peer list */
                             network_update_peers_from_sync(rx_msg.sender,
                                                            rx_msg.data.sync.peer_ids,
                                                            rx_msg.data.sync.peer_count);
                         }
 
                         if (sync_peer_contains(&rx_msg.data.sync, network_get_ownid())) {
-                            /* Own ID present — acknowledged */
                             mprintf("UWBsync [SLAVE] - Acknowledged by master 0x%04X\r\n",
                                     rx_msg.sender);
                             network_set_acknowledged(true);
+                            SYNC_PAD(t_start);
                             return UWB_SYNC_SLAVE_ACKNOWLEDGED;
+
                         } else {
                             network_set_acknowledged(false);
                             mprintf("UWBsync [SLAVE] - Not acknowledged, sending reply\r\n");
-                            if (!uwb_send_sync_reply(&rx_msg))
+                            if (!uwb_send_sync_reply(&rx_msg)) {
+                                SYNC_PAD(t_start);
                                 return UWB_SYNC_SLAVE_REPLY_FAILED;
+                            }
+                            SYNC_PAD(t_start);
                             return UWB_SYNC_SLAVE_PENDING;
                         }
 
                     } else {
-                        /* SYNC addressed to master — another slave is replying.
-                         * Wait to avoid colliding with its transmission. */
                         mprintf("UWBsync [SLAVE] - Detected SYNC reply, waiting %d ms\r\n",
                                 T_SYNC_TO_SYNC);
                         osDelay(T_SYNC_TO_SYNC);
@@ -268,12 +281,6 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
                     mprintf("UWBsync [SLAVE] - Detected ERR message\r\n");
                     break;
 
-                /* The following message types indicate an active TWR exchange.
-                 * Wait for the exchange to finish before transmitting, to avoid
-                 * corrupting an ongoing ranging session.
-                 * TODO: put DWM3000 to sleep during these delays instead of
-                 *       busy-waiting, to avoid spurious DWM_RX_TIMEOUT events. */
-                //TODO: put DWM3000 to sleep during these delays instead of busy-waiting, to avoid spurious DWM_RX_TIMEOUT events.
                 case MSG_TYPE_POLL:
                     mprintf("UWBsync [SLAVE] - Detected POLL, waiting %d ms\r\n", T_POLL_TO_SYNC);
                     osDelay(T_POLL_TO_SYNC);
@@ -305,14 +312,11 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
                 timeout_count++;
                 mprintf("UWBsync [SLAVE] - No SYNC received (timeout %d/%d)\r\n",
                         timeout_count, SYNC_TIMEOUT_MAX);
-
                 if (timeout_count >= SYNC_TIMEOUT_MAX) {
-                    /* No master heard — stagger promotion using ID-based delay
-                     * to reduce simultaneous promotion by multiple devices. */
                     uwb_id_delay(network_get_ownid());
                     network_set_master(network_get_ownid());
                     mprintf("UWBsync [SLAVE] - No master found, promoting to master\r\n");
-                    return UWB_SYNC_NEW_MASTER;
+                    return UWB_SYNC_NEW_MASTER;   /* no pad — no SYNC reference point */
                 }
                 break;
             }

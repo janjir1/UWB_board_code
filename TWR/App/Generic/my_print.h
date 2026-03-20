@@ -16,6 +16,7 @@ extern "C" {
 
 // Function Prototype
 void mprintf(const char *format, ...);
+void PrintTask(void *arg);
 
 #ifdef __cplusplus
 }

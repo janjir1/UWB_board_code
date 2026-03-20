@@ -26,7 +26,7 @@
 
 
 
-void StartDWM(void *argument) {
+void StartRangingTask(void *argument) {
     mprintf("Starting DWM3000 task\r\n");
     bool passed = dwm_init();;
     if (passed) {
@@ -71,12 +71,15 @@ void StartDWM(void *argument) {
 
     network_init(dwm_get_addr());
 
+
+
     uint8_t seq = 0;
     while(1){
         mprintf("Starting sync\r\n");
         uwb_sync_result_t result = uwb_sync(seq++);
         mprintf("Sync result: %d\r\n", result);
         uwb_twr_test(seq, result);
+
         osDelay(500);
         
     

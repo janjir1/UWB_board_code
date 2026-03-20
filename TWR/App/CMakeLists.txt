@@ -8,7 +8,7 @@ add_library(app STATIC
     Blink/blink.cpp
 
     # Generic utilities
-    Generic/my_print.cpp
+    Generic/my_print.c
 
     # DWM — add files here when ready
     DWM/DWM3000.c

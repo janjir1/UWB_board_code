@@ -26,6 +26,7 @@
 #include "lsm6dsv.h"
 #include "blink.h"
 #include "DWM3000.h"
+#include "my_print.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -74,12 +75,19 @@ const osThreadAttr_t Accelerometer_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
-/* Definitions for DWM */
-osThreadId_t DWMHandle;
-const osThreadAttr_t DWM_attributes = {
-  .name = "DWM",
+/* Definitions for Ranging */
+osThreadId_t RangingHandle;
+const osThreadAttr_t Ranging_attributes = {
+  .name = "Ranging",
   .stack_size = 1024 * 4,
-  .priority = (osPriority_t) osPriorityNormal1,
+  .priority = (osPriority_t) osPriorityHigh,
+};
+/* Definitions for mprinf */
+osThreadId_t mprinfHandle;
+const osThreadAttr_t mprinf_attributes = {
+  .name = "mprinf",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityLow,
 };
 /* USER CODE BEGIN PV */
 
@@ -96,7 +104,8 @@ static void MX_ADC1_Init(void);
 void StartDefaultTask(void *argument);
 extern void StartBlink(void *argument);
 extern void StartAcc(void *argument);
-extern void StartDWM(void *argument);
+extern void StartRangingTask(void *argument);
+extern void PrintTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -174,8 +183,11 @@ int main(void)
   /* creation of Accelerometer */
   AccelerometerHandle = osThreadNew(StartAcc, NULL, &Accelerometer_attributes);
 
-  /* creation of DWM */
-  DWMHandle = osThreadNew(StartDWM, NULL, &DWM_attributes);
+  /* creation of Ranging */
+  RangingHandle = osThreadNew(StartRangingTask, NULL, &Ranging_attributes);
+
+  /* creation of mprinf */
+  mprinfHandle = osThreadNew(PrintTask, NULL, &mprinf_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
