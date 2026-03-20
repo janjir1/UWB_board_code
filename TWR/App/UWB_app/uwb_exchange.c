@@ -220,6 +220,7 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
         /* ---- SLAVE: wait for SYNC and attempt to join ---- */
         dwm_rx_frame_t rx_frame = {0};
         uint8_t timeout_count = 0;
+        dwm_rx_flush();
 
         while (1) {
             osDelay(1);
@@ -387,7 +388,11 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
 
             uint16_t target_id = network_get_highest_uncertainty();
             mprintf("UWB_eTWR [MASTER] - Ranging target: 0x%04X\r\n", target_id);
-            osDelay(1); //wait for other to start listening
+
+            dwm_rx_flush();
+
+            osDelay(2); //wait for other to start listening
+
             if (!uwb_send_POLL(seq_num, target_id)) {
                 mprintf("UWB_eTWR [MASTER] - Failed to send POLL\r\n");
                 return UWB_TWR_TX_FAILED;
@@ -457,6 +462,7 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
         case UWB_SYNC_SLAVE_PENDING:
         {
             network_reset_measurements();
+            dwm_rx_flush();
 
             dwm_rx_frame_t rx_frame = {0};
             uint32_t t_start = osKernelGetTickCount();
@@ -502,7 +508,7 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
                                     rx_msg.sender, rx_msg.receiver);
                             network_set_obs_poll_rx(&RX_MEAS_FROM_FRAME(rx_frame));
                             //delay to cleanly add all the messages to the queue, no need to act on it
-                            osDelay(1);
+                            osDelay(2);
                         }
                         break;
 
@@ -589,6 +595,90 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
 
         default:
             return UWB_TWR_NOT_ENOUGH_DEVICES;
+    }
+}
+
+
+uint32_t uwb_share (uint8_t seq_num, uwb_etwr_result_t etwr_result, uint32_t sleep_time){
+
+    switch (etwr_result) {
+
+        case UWB_TWR_RECEIVED:
+        {
+            osDelay(2);
+            msg_share_t share_msg = {
+                .seq_num    = seq_num,
+                .sleep_time = sleep_time,
+            };
+
+            msg_t tx_msg = {
+                .type      = MSG_TYPE_SHARE,
+                .sender    = network_get_ownid(),
+                .receiver  = ALL_ID,
+                .data.share = share_msg,
+            };
+
+            dwm_tx_frame_t tx_frame = msg_encode(&tx_msg);
+
+            if (dwm_tx(&tx_frame) != DWM_TX_OK) {
+                mprintf("UWB_share [MASTER] - SHARE send failed, retrying\r\n");
+                if (dwm_tx(&tx_frame) != DWM_TX_OK) {
+                    mprintf("UWB_share [MASTER] - SHARE retry failed\r\n");
+                    return 0;
+                }
+            }
+
+            mprintf("UWB_share [MASTER] - SHARE sent\r\n");
+            return sleep_time;
+        }
+
+        case UWB_TWR_RECEIVED_PASSIVE:
+        case UWB_TWR_EXCHANGE_COMPLETE:
+        case UWB_TWR_NOTHING:
+        case UWB_TWR_NOT_ENOUGH_DEVICES:
+        case UWB_TWR_TX_FAILED:
+        case UWB_TWR_TIMEOUT:
+        case UWB_TWR_UNEXPECTED_MASTER:
+        default:
+
+            dwm_rx_flush();
+            dwm_rx_frame_t rx_frame = {0};
+            uint32_t t_start = osKernelGetTickCount();
+
+            while (1) {
+                uint32_t elapsed = osKernelGetTickCount() - t_start;
+                if (elapsed >= T_SHARE_RX_WAIT) {
+                    mprintf("UWB_share [SLAVE] - SHARE window expired\r\n");
+                    return 0;
+                }
+
+                dwm_rx(&rx_frame, T_SHARE_RX_WAIT - elapsed, true);
+
+                switch (rx_frame.type) {
+                case DWM_RX_OK: {
+                    msg_t rx_msg;
+                    msg_decode(&rx_frame, &rx_msg);
+
+                    if (rx_msg.type == MSG_TYPE_SHARE) {
+                        mprintf("UWB_share [SLAVE] - Set sleep time: 0x%04X\r\n", (rx_msg.data.share.sleep_time - T_EARLY_WKUP));
+                        return (rx_msg.data.share.sleep_time - T_EARLY_WKUP);
+                    }
+                    else{
+                        mprintf("UWB_share [SLAVE] - Unexpected message type 0x%02X, ignoring\r\n", rx_msg.type);
+                    }
+                    break;
+                }
+                case DWM_RX_ERR:
+                    mprintf("UWB_share [SLAVE] - RX error: 0x%08lX\r\n", rx_frame.status);
+                    break;
+
+                case DWM_RX_TIMEOUT:
+                    mprintf("UWB_share [SLAVE] - SHARE window closed\r\n");
+                    return 0;
+                
+
+                }
+            } 
     }
 }
 
@@ -751,6 +841,7 @@ static bool uwb_send_RESPONSE(uint8_t seq_num, uint16_t target_id)
     //mprintf("UWB_eTWR [SLAVE] - RESPONSE sent (seq=%d, target=0x%04X)\r\n", seq_num, target_id);
     return true;
 }
+
 
 /**
  * @brief Build and send a delayed FINAL frame to complete the DS-TWR exchange.

@@ -25,6 +25,10 @@ extern "C" {
  *  TODO: reduce once per-device stagger is tuned. */
 #define T_SYNC_RX_ANSWER       20U            /* ms */
 
+#define T_SHARE_RX_WAIT         50U
+
+#define T_EARLY_WKUP            5U
+
 /** @brief Slave delay after detecting a POLL — avoids corrupting an
  *  ongoing TWR exchange before transmitting own SYNC reply.
  *  TODO: set to actual POLL→FINAL duration once measured. */
@@ -115,6 +119,7 @@ typedef enum {
 uwb_sync_result_t  uwb_sync(uint8_t seq_num);
 uwb_etwr_result_t  uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_result);
 uwb_etwr_result_t uwb_twr_test(uint8_t seq_num, uwb_sync_result_t sync_result);
+uint32_t uwb_share (uint8_t seq_num, uwb_etwr_result_t etwr_result, uint32_t sleep_time);
 
 #ifdef __cplusplus
 }

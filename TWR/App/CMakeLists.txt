@@ -17,6 +17,7 @@ add_library(app STATIC
     UWB_app/messages.c
     UWB_app/uwb_network.c
     UWB_app/uwb_exchange.c
+    UWB_app/position.c
 )
 
 target_include_directories(app PUBLIC

@@ -1,6 +1,7 @@
 #include "cmsis_os.h" // or "FreeRTOS.h" depending on your setup
 #include "queue.h"
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -18,6 +19,7 @@
 #include "DWM3000_driver.h"
 #include "../UWB_app/uwb_exchange.h"
 #include "../UWB_app/uwb_network.h"
+#include "../UWB_app/position.h"
 
 #define U64_HI(x)  ((uint32_t)((x) >> 32))
 #define U64_LO(x)  ((uint32_t)((x) & 0xFFFFFFFFU))
@@ -76,11 +78,12 @@ void StartRangingTask(void *argument) {
     uint8_t seq = 0;
     while(1){
         mprintf("Starting sync\r\n");
-        uwb_sync_result_t result = uwb_sync(seq++);
-        mprintf("Sync result: %d\r\n", result);
-        uwb_twr_test(seq, result);
-
-        osDelay(500);
+        uwb_sync_result_t result_sync = uwb_sync(seq++);
+        mprintf("Sync result: %d\r\n", result_sync);
+        uwb_etwr_result_t result_etwr = uwb_twr_test(seq, result_sync);
+        position_calculate(result_etwr);
+        uint32_t sleep_time = uwb_share (seq, result_etwr, 490); //TODO if output is 0 set to last times sleep_time
+        osDelay(sleep_time);
         
     
     }

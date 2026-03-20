@@ -55,6 +55,8 @@ extern "C" {
 /** @brief Byte offset of the third timestamp field. */
 #define MSG_PAYLOAD_OFFSET_TS_2         (MSG_HEADER_LEN + 1 + MSG_TS_LEN * 2)
 
+#define MSG_PAYLOAD_OFFSET_SHARE_SLEEP   (MSG_PAYLOAD_OFFSET_SEQ + 1U)
+
 /**
  * @brief Byte offset of the response RSSI field inside the FINAL message.
  *
@@ -86,6 +88,7 @@ typedef enum {
     MSG_TYPE_POLL     = 0x02, /**< Poll — initiator starts a TWR exchange.            */
     MSG_TYPE_RESPONSE = 0x03, /**< Response — responder replies to a poll.            */
     MSG_TYPE_FINAL    = 0x04, /**< Final — initiator closes the DS-TWR exchange.      */
+    MSG_TYPE_SHARE    = 0x05
 } msg_type_t;
 
 /* ── Per-message payload structs ────────────────────────────────────────── */
@@ -164,6 +167,20 @@ typedef struct {
     uint64_t final_ts;
 } msg_final_t;
 
+/**
+ * @brief Payload for @c MSG_TYPE_SHARE.
+ *
+ * Broadcast by a node after completing a ranging exchange to share
+ * its current sleep/cycle timing with the network, allowing other
+ * devices to synchronise their wake schedules.
+ *
+ * All fields are transmitted on the wire.
+ */
+typedef struct {
+    uint8_t  seq_num;      /**< Sequence number. */
+    uint32_t sleep_time;   /**< Planned sleep duration in ms before next cycle. */
+} msg_share_t;
+
 /* ── Unified decoded message container ─────────────────────────────────── */
 
 /**
@@ -185,6 +202,7 @@ typedef struct {
         msg_poll_t     poll;     /**< Valid when @c type == @c MSG_TYPE_POLL.     */
         msg_response_t response; /**< Valid when @c type == @c MSG_TYPE_RESPONSE. */
         msg_final_t    final;    /**< Valid when @c type == @c MSG_TYPE_FINAL.    */
+        msg_share_t    share;
     } data;
 } msg_t;
 

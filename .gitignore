@@ -84,3 +84,5 @@ desktop.ini
 *.bak
 *.tmp
 *~
+.$*
+for_diff.c

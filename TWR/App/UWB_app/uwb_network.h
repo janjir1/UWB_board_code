@@ -312,6 +312,8 @@ bool    network_set_passive_report_rx(uint8_t index, const uwb_rx_meas_t *meas);
 const   passive_observation_t *network_get_self_passive_observation(void);
 uint8_t network_get_self_passive_count(void);
 
+network_t *network_get_network(void);
+
 #ifdef __cplusplus
 }
 #endif

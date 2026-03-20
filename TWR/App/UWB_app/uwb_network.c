@@ -49,6 +49,7 @@ void network_add_peer(uint16_t id)
     node_t *p = &net.peers[net.count];
     memset(p, 0, sizeof(node_t));
     p->id = id;
+    p->uncertainty = 1.0;
     /* pos and uncertainty zero-initialised by memset:
      * uncertainty == 0 signals "no estimate yet" — scheduler will
      * prioritise this peer for ranging */
@@ -73,6 +74,11 @@ const node_t *network_get_peers(uint8_t *out_count)
 {
     *out_count = net.count;
     return net.peers;
+}
+
+network_t *network_get_network(void)
+{
+    return &net;
 }
 
 uint8_t network_fill_peer_ids(uint16_t *out_ids, uint8_t max_count)

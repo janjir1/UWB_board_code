@@ -12,11 +12,13 @@ static void msg_decode_sync    (const dwm_rx_frame_t *frame, msg_sync_t     *out
 static void msg_decode_poll    (const dwm_rx_frame_t *frame, msg_poll_t     *out);
 static void msg_decode_response(const dwm_rx_frame_t *frame, msg_response_t *out);
 static void msg_decode_final   (const dwm_rx_frame_t *frame, msg_final_t    *out);
+static void msg_decode_share   (const dwm_rx_frame_t *frame, msg_share_t    *out);
 
 static uint16_t msg_encode_sync    (const msg_sync_t *in, uint8_t *buf);
 static uint16_t msg_encode_poll    (const msg_poll_t *in, uint8_t *buf);
 static uint16_t msg_encode_response(const msg_response_t *in, uint8_t *buf);
 static uint16_t msg_encode_final   (const msg_final_t *in, uint8_t *buf);
+static uint16_t msg_encode_share   (const msg_share_t *in, uint8_t *buf);
 
 /* ── Public API ─────────────────────────────────────────────────────────── */
 
@@ -76,6 +78,11 @@ void msg_decode(const dwm_rx_frame_t *receive_frame, msg_t *msg_decoded)
             msg_decoded->len = sizeof(msg_final_t);
             break;
 
+        case MSG_TYPE_SHARE:
+            msg_decode_share   (receive_frame, &msg_decoded->data.share);
+            msg_decoded->len = sizeof(msg_share_t);
+            break;
+
         default:
             msg_decoded->type = MSG_TYPE_ERR;
             msg_decoded->len  = 0;
@@ -115,6 +122,8 @@ dwm_tx_frame_t msg_encode(const msg_t *msg)
             frame.len = msg_encode_response(&msg->data.response, buf);  break;
         case MSG_TYPE_FINAL:
             frame.len = msg_encode_final   (&msg->data.final,    buf);  break;
+        case MSG_TYPE_SHARE:
+            frame.len = msg_encode_share   (&msg->data.share,    buf);  break;
         default:
             break;
     }
@@ -306,6 +315,44 @@ static uint16_t msg_encode_final(const msg_final_t *in, uint8_t *buf)
     memcpy(&buf[MSG_PAYLOAD_OFFSET_RESP_RSSI], &in->resp_rssi_q8, sizeof(int16_t));
     memcpy(&buf[MSG_PAYLOAD_OFFSET_RESP_FP],   &in->resp_fp_q8,   sizeof(int16_t));
     return MSG_PAYLOAD_OFFSET_RESP_FP + sizeof(int16_t);
+}
+
+/**
+ * @brief Decode a SHARE message payload.
+ *
+ * Extracts the sender's planned sleep time so the receiver can align
+ * its own wake schedule to the sender's next cycle.
+ *
+ * @param[in]  frame  Raw RX frame.
+ * @param[out] out    Decoded share struct to populate.
+ */
+static void msg_decode_share(const dwm_rx_frame_t *frame, msg_share_t *out)
+{
+    out->seq_num = frame->data[MSG_PAYLOAD_OFFSET_SEQ];
+    memcpy(&out->sleep_time, &frame->data[MSG_PAYLOAD_OFFSET_SHARE_SLEEP],
+           sizeof(uint32_t));
+}
+
+/**
+ * @brief Encode a SHARE message payload into the wire buffer.
+ *
+ * Wire layout:
+ * @code
+ * [SEQ]        1 byte
+ * [SLEEP]      4 bytes  sleep_time — ms until next cycle start
+ * @endcode
+ *
+ * @param[in]  in   Populated share struct.
+ * @param[out] buf  Output buffer, must be at least
+ *                  @c MSG_PAYLOAD_OFFSET_SHARE_SLEEP + sizeof(uint32_t) bytes.
+ * @return          Total bytes written.
+ */
+static uint16_t msg_encode_share(const msg_share_t *in, uint8_t *buf)
+{
+    buf[MSG_PAYLOAD_OFFSET_SEQ] = in->seq_num;
+    memcpy(&buf[MSG_PAYLOAD_OFFSET_SHARE_SLEEP], &in->sleep_time,
+           sizeof(uint32_t));
+    return MSG_PAYLOAD_OFFSET_SHARE_SLEEP + sizeof(uint32_t);
 }
 
 
