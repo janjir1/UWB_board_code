@@ -62,6 +62,18 @@ typedef struct {
 } twr_observation_t;
 
 /**
+ * @brief One passive node's observation of the three active DS-TWR frames.
+ *
+ * Captured by listening to POLL, RESPONSE, and FINAL without transmitting.
+ * Every passive node always populates all three fields.
+ */
+typedef struct {
+    uint64_t poll_rx;   /**< Reception of the POLL frame. */
+    uint64_t resp_rx;   /**< Reception of the RESPONSE frame. */
+    uint64_t final_rx;  /**< Reception of the FINAL frame. */
+} twr_observation_simple_t;
+
+/**
  * @brief One passive node's reception records of other passive report frames.
  *
  * After FINAL, each passive node broadcasts its own MSG_TYPE_PASSIVE frame
@@ -75,8 +87,13 @@ typedef struct {
  * The TWR pair (initiator + responder) never send passive frames, hence -2.
  */
 typedef struct {
-    uwb_rx_meas_t passive_rx[NETWORK_MAX_PEERS - 2];
+    uint64_t passive_rx[NETWORK_MAX_PEERS - 2];
 } passive_observation_t;
+
+typedef struct {
+    uint64_t passive_tx;
+    uwb_rx_meas_t passive_rx;
+}ss_twr_t;
 
 /* -----------------------------------------------------------------------
  * Exchange measurement block
@@ -115,9 +132,11 @@ typedef struct {
                                                   *   self_passive_observation.passive_rx[]. */
 
     // ---- Master-collected passive data ---- 
-    twr_observation_t     twr_observations[NETWORK_MAX_PEERS - 2];      /*< Each passive node's POLL/RESP/FINAL view. */
-    passive_observation_t passive_observations[NETWORK_MAX_PEERS - 2];  /*< Each passive node's inter-passive view. */
-    uint8_t               passive_count;  /**< Number of passive reports received.
+    uint16_t                     passive_device_id[NETWORK_MAX_PEERS - 2];
+    ss_twr_t                     ss_twr[NETWORK_MAX_PEERS - 2];                /*Each nodes tx time, and masters RX time*/              
+    twr_observation_simple_t     twr_observations[NETWORK_MAX_PEERS - 2];      /*< Each passive node's POLL/RESP/FINAL view. */
+    passive_observation_t        passive_observations[NETWORK_MAX_PEERS - 2];  /*< Each passive node's inter-passive view. */
+    uint8_t                      passive_count;  /**< Number of passive reports received.
                                            *   Valid indices: 0 … passive_count-1. */
 
 } measurements_t;
@@ -308,11 +327,21 @@ void network_set_obs_final_rx(const uwb_rx_meas_t *meas);
 const twr_observation_t *network_get_self_twr_observation(void);
 
 /* passive_observation_t — passive own view of passive reports */
-bool    network_set_passive_report_rx(uint8_t index, const uwb_rx_meas_t *meas);
+bool    network_set_passive_report_rx(uint8_t index, const uint64_t meas);
 const   passive_observation_t *network_get_self_passive_observation(void);
 uint8_t network_get_self_passive_count(void);
 
 network_t *network_get_network(void);
+
+bool    network_set_passive_ss_rx(uint8_t index, const uwb_rx_meas_t *meas);
+bool    network_set_passive_ss_tx(uint8_t index, uint64_t ts);
+bool    network_set_passive_twr_observation(uint8_t index, const twr_observation_simple_t *obs);
+bool    network_set_passive_observation(uint8_t index, const passive_observation_t *obs);
+void    network_increment_passive_count(void);
+uint8_t network_get_passive_count(void);
+
+bool network_set_passive_device_id(uint8_t index, uint16_t id);
+int8_t network_get_peer_index(uint16_t id);
 
 #ifdef __cplusplus
 }

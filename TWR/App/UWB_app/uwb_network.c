@@ -114,7 +114,9 @@ void network_update_peers_from_sync(uint16_t master_id,
 
     /* Add all peers from SYNC, preserving existing data if known */
     for (int i = 0; i < peer_count && new_count < NETWORK_MAX_PEERS; i++) {
-        if (peer_ids[i] == net.self.id) continue; /* never add self */
+        //if (peer_ids[i] == net.self.id) continue; /* never add self */
+        //TODO i need self in the list, if it breaks something, im sorry
+        //BUG If there is s bug wuth peers, its this
 
         node_t *existing = find_peer(peer_ids[i]);
         if (existing) {
@@ -285,10 +287,10 @@ const twr_observation_t *network_get_self_twr_observation(void)
  * (0-based), which equals this device's position in the passive chain.
  * Returns false if the index is out of bounds.
  */
-bool network_set_passive_report_rx(uint8_t index, const uwb_rx_meas_t *meas)
+bool network_set_passive_report_rx(uint8_t index, const uint64_t meas)
 {
     if (index >= NETWORK_MAX_PEERS - 2) return false;
-    net.measurements.self_passive_observation.passive_rx[index] = *meas;
+    net.measurements.self_passive_observation.passive_rx[index] = meas;
     net.measurements.self_passive_count = index + 1;
     return true;
 }
@@ -301,4 +303,97 @@ const passive_observation_t *network_get_self_passive_observation(void)
 uint8_t network_get_self_passive_count(void)
 {
     return net.measurements.self_passive_count;
+}
+
+/* -----------------------------------------------------------------------
+ * measurements — Master-collected passive data
+ * ----------------------------------------------------------------------- */
+
+/**
+ * @brief Record the master's own RX measurement of a passive node's PASSIVE frame.
+ *
+ * @param index  Passive node index (0-based, order of arrival).
+ * @param meas   Master's RX measurement of that PASSIVE frame.
+ * @return false if index is out of bounds.
+ */
+bool network_set_passive_ss_rx(uint8_t index, const uwb_rx_meas_t *meas)
+{
+    if (index >= NETWORK_MAX_PEERS - 2) return false;
+    net.measurements.ss_twr[index].passive_rx = *meas;
+    return true;
+}
+
+/**
+ * @brief Record the TX timestamp embedded in a passive node's PASSIVE frame.
+ *
+ * @param index  Passive node index (0-based).
+ * @param ts     TX timestamp as reported by the passive node.
+ * @return false if index is out of bounds.
+ */
+bool network_set_passive_ss_tx(uint8_t index, uint64_t ts)
+{
+    if (index >= NETWORK_MAX_PEERS - 2) return false;
+    net.measurements.ss_twr[index].passive_tx = ts;
+    return true;
+}
+
+/**
+ * @brief Record a passive node's observation of POLL, RESPONSE, and FINAL.
+ *
+ * @param index  Passive node index (0-based).
+ * @param obs    Full POLL/RESP/FINAL observation decoded from the PASSIVE message.
+ * @return false if index is out of bounds.
+ */
+bool network_set_passive_twr_observation(uint8_t index, const twr_observation_simple_t *obs)
+{
+    if (index >= NETWORK_MAX_PEERS - 2) return false;
+    net.measurements.twr_observations[index].poll_rx  = obs->poll_rx;
+    net.measurements.twr_observations[index].resp_rx  = obs->resp_rx;
+    net.measurements.twr_observations[index].final_rx = obs->final_rx;
+    return true;
+}
+
+/**
+ * @brief Record a passive node's observation of preceding PASSIVE frames.
+ *
+ * @param index  Passive node index (0-based).
+ * @param obs    Inter-passive RX timestamps decoded from the PASSIVE message.
+ * @return false if index is out of bounds.
+ */
+bool network_set_passive_observation(uint8_t index, const passive_observation_t *obs)
+{
+    if (index >= NETWORK_MAX_PEERS - 2) return false;
+    net.measurements.passive_observations[index] = *obs;
+    return true;
+}
+
+/**
+ * @brief Increment the passive report counter after a full PASSIVE frame is stored.
+ *        Call once per received PASSIVE, after all four setters above.
+ */
+void network_increment_passive_count(void)
+{
+    if (net.measurements.passive_count < NETWORK_MAX_PEERS - 2)
+        net.measurements.passive_count++;
+}
+
+uint8_t network_get_passive_count(void)
+{
+    return net.measurements.passive_count;
+}
+
+bool network_set_passive_device_id(uint8_t index, uint16_t id)
+{
+    if (index >= NETWORK_MAX_PEERS - 2) return false;
+    net.measurements.passive_device_id[index] = id;
+    return true;
+}
+
+int8_t network_get_peer_index(uint16_t id)
+{
+    for (int8_t i = 0; i < net.count; i++) {
+        if (net.peers[i].id == id)
+            return i;
+    }
+    return -1;
 }

@@ -88,7 +88,8 @@ typedef enum {
     MSG_TYPE_POLL     = 0x02, /**< Poll — initiator starts a TWR exchange.            */
     MSG_TYPE_RESPONSE = 0x03, /**< Response — responder replies to a poll.            */
     MSG_TYPE_FINAL    = 0x04, /**< Final — initiator closes the DS-TWR exchange.      */
-    MSG_TYPE_SHARE    = 0x05
+    MSG_TYPE_SHARE    = 0x05,
+    MSG_TYPE_PASSIVE  = 0x06
 } msg_type_t;
 
 /* ── Per-message payload structs ────────────────────────────────────────── */
@@ -181,6 +182,29 @@ typedef struct {
     uint32_t sleep_time;   /**< Planned sleep duration in ms before next cycle. */
 } msg_share_t;
 
+
+typedef struct {
+    uint8_t  seq_num;         /**< Sequence number matching the TWR exchange observed. */
+
+    /* --- Passive observations of the TWR exchange (in this node's clock domain) --- */
+    uint64_t poll_rx_ts;      /**< RX timestamp of POLL at this passive node (40-bit). */
+    uint64_t resp_rx_ts;      /**< RX timestamp of RESPONSE at this passive node (40-bit). */
+    uint64_t final_rx_ts;     /**< RX timestamp of FINAL at this passive node (40-bit). */
+
+    /* --- This node's own PASSIVE transmission --- */
+    uint64_t passive_tx_ts;   /**< Predicted TX timestamp of this PASSIVE (40-bit). */
+
+    /* --- Preceding PASSIVE TX timestamps, in peer-list order --- */
+    uint8_t  entry_count;                              /**< Number of valid entries. */
+    uint64_t entries[NETWORK_MAX_PEERS-2];          /**< TX timestamps of preceding PASSIVEs. */
+                                                    // The TWR pair is not in it
+
+    /*-- Not in message --*/
+    int16_t  poll_rssi_q8;
+    int16_t  resp_rssi_q8;
+    int16_t  final_rssi_q8;
+} msg_passive_t;
+
 /* ── Unified decoded message container ─────────────────────────────────── */
 
 /**
@@ -203,6 +227,7 @@ typedef struct {
         msg_response_t response; /**< Valid when @c type == @c MSG_TYPE_RESPONSE. */
         msg_final_t    final;    /**< Valid when @c type == @c MSG_TYPE_FINAL.    */
         msg_share_t    share;
+        msg_passive_t  passive;
     } data;
 } msg_t;
 

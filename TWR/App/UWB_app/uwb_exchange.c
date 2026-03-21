@@ -11,6 +11,7 @@
 #include "messages.h"
 #include "../UWB_app/uwb_network.h"
 #include "uwb_exchange.h"
+#include "position.h"
 
 /* -----------------------------------------------------------------------
  * Forward declarations
@@ -22,6 +23,7 @@ static bool              uwb_send_RESPONSE(uint8_t seq_num, uint16_t target_id);
 static bool              uwb_send_FINAL(uint8_t seq_num, uint16_t target_id);
 static uwb_etwr_result_t uwb_tdoa_receiver(uint8_t seq_num);
 static uwb_etwr_result_t uwb_tdoa_sender(uint8_t seq_num);
+static uwb_etwr_result_t uwb_tdoa_initiator(uint8_t seq_num);
 
 /* -----------------------------------------------------------------------
  * Internal macros
@@ -437,7 +439,8 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
                         /* Hand master role to target — it holds all timestamps
                          * and will compute the range. */
                         network_set_master(target_id);
-                        return UWB_TWR_EXCHANGE_COMPLETE;
+                        return uwb_tdoa_initiator(seq_num);
+
 
                     } else {
                         mprintf("UWB_eTWR [MASTER] - Unexpected msg 0x%02X from 0x%04X, ignoring\r\n",
@@ -938,10 +941,85 @@ static bool uwb_send_FINAL(uint8_t seq_num, uint16_t target_id)
 //TODO: implement ranging formula and publish result via network layer.
 //TODO: apply antenna delay correction to computed distance.
 static uwb_etwr_result_t uwb_tdoa_receiver(uint8_t seq_num)
-{
-    /* TODO: implement DS-TWR ranging formula and publish distance estimate */
-    (void)seq_num;
-    return UWB_TWR_RECEIVED;
+{   
+    //we also dont do this for TWR initiatior
+    if (network_get_count()<=2){
+        mprintf("UWB_eTWR [MASTER] - Not enough nodes for TDOA");
+        return UWB_TWR_RECEIVED;
+    }
+    mprintf("Expecting PASSIVE message from %d devices", (network_get_count()-2));
+
+    dwm_rx_flush();
+
+    dwm_rx_frame_t rx_frame = {0};
+    uint32_t t_start = osKernelGetTickCount();
+    uint8_t  idx = 0;
+    uint32_t wait_time = (T_PASSIVE_TX_WAIT_MS * (network_get_count()-2));
+    while (1) {
+        uint32_t elapsed = osKernelGetTickCount() - t_start;
+        if (elapsed >= wait_time) {
+            mprintf("UWB_eTWR [MASTER] - PASSIVE window expired\r\n");
+            return UWB_TWR_TIMEOUT;
+        }
+
+        dwm_rx(&rx_frame, wait_time - elapsed, true);
+
+        switch (rx_frame.type) {
+        case DWM_RX_OK: {
+            msg_t rx_msg;
+            msg_decode(&rx_frame, &rx_msg);
+
+            if (rx_msg.type == MSG_TYPE_PASSIVE) {
+                if (rx_msg.receiver != network_get_ownid()){
+                    mprintf("UWB_eTWR [MASTER] - Unexpected PASSIVE reciever id:0x%04X\r\n", rx_msg.receiver);
+                    return UWB_TWR_UNEXPECTED_MASTER;
+                }
+                mprintf("UWB_eTWR [MASTER] - recieved PASSIVE from id:0x%04X\r\n", rx_msg.sender);
+                network_set_passive_device_id(idx, rx_msg.sender);
+                network_set_passive_ss_tx(idx, rx_msg.data.passive.passive_tx_ts);
+                network_set_passive_ss_rx(idx, &RX_MEAS_FROM_FRAME(rx_frame));
+                twr_observation_simple_t obs = {
+                    .poll_rx    = rx_msg.data.passive.poll_rx_ts,
+                    .resp_rx    = rx_msg.data.passive.resp_rx_ts,
+                    .final_rx   = rx_msg.data.passive.final_rx_ts,
+                };
+                network_set_passive_twr_observation(idx, &obs);       // built from poll/resp/final_rx_ts
+
+                passive_observation_t passive_obs = {0};
+
+                for (uint8_t i = 0; i < rx_msg.data.passive.entry_count; i++) {
+                    passive_obs.passive_rx[i] = rx_msg.data.passive.entries[i];
+                }
+
+                network_set_passive_observation(idx, &passive_obs);   // built from entries[]
+                network_increment_passive_count();
+                idx++;
+
+                if (idx == (network_get_count()-2)){
+                    mprintf("Recieved all expected PASSIVE messages");
+                    return UWB_TWR_RECEIVED;
+                }
+                //TODO remove peers that didnt send this from network
+                osDelay(2); //listening to another message if not the message may come during antenna reinicialization
+
+            }
+            else {
+                mprintf("UWB_passive - Unexpected msg type 0x%02X, ignoring\r\n", rx_msg.type);
+            }
+            break;
+        }
+
+        case DWM_RX_ERR:
+            mprintf("UWB_share [SLAVE] - RX error: 0x%08lX\r\n", rx_frame.status);
+            break;
+
+        case DWM_RX_TIMEOUT:
+            mprintf("UWB_share [SLAVE] - SHARE window closed\r\n");
+            return UWB_TWR_TIMEOUT;
+
+        }
+    }
+    //return UWB_TWR_RECEIVED;
 }
 
 /**
@@ -957,10 +1035,197 @@ static uwb_etwr_result_t uwb_tdoa_receiver(uint8_t seq_num)
 //TODO: implement MSG_TYPE_PASSIVE frame build and transmission.
 static uwb_etwr_result_t uwb_tdoa_sender(uint8_t seq_num)
 {
-    /* TODO: build and transmit MSG_TYPE_PASSIVE frame with own observation timestamps */
-    (void)seq_num;
+    //removing master from list, so devies are not waiting for him to send message - he never will
+    //last entry on the list is now at his position, should not matter, as all devices do the same thing
+
+    network_remove_peer(network_get_master());
+
+    int8_t my_idx = network_get_peer_index(network_get_ownid());
+    if (my_idx < 0) {
+        mprintf("UWB_passive - Own ID not found in peer list\r\n");
+        return UWB_TWR_TIMEOUT;
+    }
+    mprintf("Expecting PASSIVE message from %d devices", (my_idx-1));
+
+
+    dwm_rx_flush();
+
+    dwm_rx_frame_t rx_frame = {0};
+    uint32_t t_start = osKernelGetTickCount();
+    uint8_t  idx = 0;
+    uint32_t wait_time = (T_PASSIVE_TX_WAIT_MS * (my_idx-1));
+    while (1) {
+        if (idx == my_idx){
+            break;
+        }
+        uint32_t elapsed = osKernelGetTickCount() - t_start;
+        if (elapsed >= wait_time) {
+            mprintf("UWB_eTWR [MASTER] - PASSIVE window expired\r\n");
+            return UWB_TWR_TIMEOUT;
+        }
+
+        dwm_rx(&rx_frame, wait_time - elapsed, true);
+
+        switch (rx_frame.type) {
+        case DWM_RX_OK: {
+            msg_t rx_msg;
+            msg_decode(&rx_frame, &rx_msg);
+
+            if (rx_msg.type == MSG_TYPE_PASSIVE) {
+                if (rx_msg.receiver != network_get_master()){
+                    mprintf("UWB_eTWR [MASTER] - Unexpected PASSIVE sender id:0x%04X\r\n", rx_msg.receiver);
+                    return UWB_TWR_UNEXPECTED_MASTER;
+                }
+                uint64_t calibrated_timestamp = position_calibrate_timestamp(rx_frame.rx_timestamp);
+                network_set_passive_report_rx((idx - 1), calibrated_timestamp);
+                idx++;
+
+                osDelay(2); //listening to another message if not the message may come during antenna reinicialization
+
+            }
+            else {
+                mprintf("UWB_passive - Unexpected msg type 0x%02X, ignoring\r\n", rx_msg.type);
+            }
+            break;
+        }
+
+        case DWM_RX_ERR:
+            mprintf("UWB_share [SLAVE] - RX error: 0x%08lX\r\n", rx_frame.status);
+            break;
+
+        case DWM_RX_TIMEOUT:
+            mprintf("UWB_share [SLAVE] - SHARE window closed\r\n");
+            return UWB_TWR_TIMEOUT;
+
+        }
+    }
+
+    //-------- sending PASSIVE msg --------------------
+
+    const twr_observation_t     *obs     = network_get_self_twr_observation();
+    const passive_observation_t *passive = network_get_self_passive_observation();
+
+    /* Read current time and add minimum TX turnaround — just enough for
+    * SPI encoding + DW3xxx TX startup (~100 µs is safe). */
+    uint32_t now_hi32        = dwt_readsystimestamphi32();
+    uint64_t now             = (uint64_t)now_hi32 << 8;
+    uint64_t passive_tx_desired = now + T_PASSIVE_TX_ASAP_TICKS;
+    
+    /* Pre-compute exact TX timestamp — same 9-bit alignment trick as FINAL. */
+    uint16_t tx_ant_delay        = dwt_gettxantennadelay();
+    uint64_t raw                 = (passive_tx_desired - tx_ant_delay) & 0xFFFFFFFFFFULL;
+    uint64_t raw_aligned         = raw & 0xFFFFFFFE00ULL;
+    uint64_t passive_tx_exact    = raw_aligned + tx_ant_delay;
+
+    /* Build entries[] from self_passive_observation — TX timestamps of
+     * preceding PASSIVE frames heard before this node transmits. */
+    uint8_t entry_count = network_get_self_passive_count();
+
+    msg_passive_t passive_msg = {
+        .seq_num       = seq_num,
+        .poll_rx_ts    = obs->poll_rx.ts,
+        .resp_rx_ts    = obs->resp_rx.ts,
+        .final_rx_ts   = obs->final_rx.ts,
+        .passive_tx_ts = passive_tx_exact,
+        .entry_count   = entry_count,
+    };
+
+    for (uint8_t i = 0; i < entry_count; i++)
+        passive_msg.entries[i] = passive->passive_rx[i];
+
+    msg_t tx_msg = {
+        .type          = MSG_TYPE_PASSIVE,
+        .sender        = network_get_ownid(),
+        .receiver      = network_get_master(),
+        .data.passive  = passive_msg,
+    };
+
+    dwm_tx_frame_t tx_frame = msg_encode(&tx_msg);
+
+    switch (dwm_tx_delayed(&tx_frame, passive_tx_desired, T_PASSIVE_TX_WAIT_MS)) {
+        case DWM_TX_LATE:
+            mprintf("UWB_passive - PASSIVE TX scheduled too late\r\n");
+            return UWB_TWR_TX_FAILED;
+        case DWM_TX_ERROR:
+            mprintf("UWB_passive - PASSIVE TX event timeout\r\n");
+            return UWB_TWR_TX_FAILED;
+        case DWM_TX_OK:
+            break;
+    }
+
+    int32_t delta = (int32_t)(tx_frame.tx_timestamp - passive_tx_exact);
+    if (delta != 0)
+        mprintf("UWB_passive - PASSIVE TX unexpected delta: %ld ticks\r\n", delta);
+
+    mprintf("UWB_passive - PASSIVE sent (seq=%d, entries=%d)\r\n", seq_num, entry_count);
     return UWB_TWR_RECEIVED_PASSIVE;
+
+    
 }
+
+static uwb_etwr_result_t uwb_tdoa_initiator(uint8_t seq_num)
+{
+    //we also dont do this for TWR initiatior
+    if (network_get_count()<=2){
+        mprintf("UWB_eTWR [MASTER] - Not enough nodes for TDOA");
+        return UWB_TWR_EXCHANGE_COMPLETE;
+    }
+    mprintf("Expecting PASSIVE message from %d devices", (network_get_count()-2));
+
+    dwm_rx_flush();
+
+    dwm_rx_frame_t rx_frame = {0};
+    uint32_t t_start = osKernelGetTickCount();
+    uint8_t  idx = 0;
+    uint32_t wait_time = (T_PASSIVE_TX_WAIT_MS * (network_get_count()-2));
+    while (1) {
+        uint32_t elapsed = osKernelGetTickCount() - t_start;
+        if (elapsed >= wait_time) {
+            mprintf("UWB_eTWR [MASTER] - PASSIVE window expired\r\n");
+            return UWB_TWR_TIMEOUT;
+        }
+
+        dwm_rx(&rx_frame, wait_time - elapsed, true);
+
+        switch (rx_frame.type) {
+        case DWM_RX_OK: {
+            msg_t rx_msg;
+            msg_decode(&rx_frame, &rx_msg);
+
+            if (rx_msg.type == MSG_TYPE_PASSIVE) {
+                if (rx_msg.receiver != network_get_ownid()){
+                    mprintf("UWB_eTWR [MASTER] - Unexpected PASSIVE reciever id:0x%04X\r\n", rx_msg.receiver);
+                    return UWB_TWR_UNEXPECTED_MASTER;
+                }
+                
+                idx++;
+
+                if (idx == (network_get_count()-2)){
+                    mprintf("Recieved all expected PASSIVE messages");
+                    return UWB_TWR_EXCHANGE_COMPLETE;
+                }
+                osDelay(2); //listening to another message if not the message may come during antenna reinicialization
+
+            }
+            else {
+                mprintf("UWB_passive - Unexpected msg type 0x%02X, ignoring\r\n", rx_msg.type);
+            }
+            break;
+        }
+
+        case DWM_RX_ERR:
+            mprintf("UWB_share [SLAVE] - RX error: 0x%08lX\r\n", rx_frame.status);
+            break;
+
+        case DWM_RX_TIMEOUT:
+            mprintf("UWB_share [SLAVE] - SHARE window closed\r\n");
+            return UWB_TWR_TIMEOUT;
+
+        }
+    }
+    return UWB_TWR_EXCHANGE_COMPLETE;
+}
+
 
 #ifdef UWB_DEBUG
 /* -----------------------------------------------------------------------

@@ -66,9 +66,15 @@ extern "C" {
  *  TODO: reduce to 1 500 µs if CPU budget allows, to lower ranging latency. */
 #define T_FINAL_TX_DELAY_TICKS UWB_US_TO_TICKS(3000)   /* ≈ 191 694 000 ticks */
 
+#define T_PASSIVE_TX_ASAP_TICKS UWB_US_TO_TICKS(300)   /* ≈ 191 694 000 ticks */
+
 /** @brief Timeout waiting for TXFRS event after scheduling the delayed FINAL.
  *  Must exceed T_FINAL_TX_DELAY in ms plus OS scheduling jitter. */
 #define T_FINAL_TX_WAIT_MS     10U            /* ms */
+
+/** @brief Timeout waiting for TXFRS event after scheduling the delayed PASSIVE.
+ *  Must exceed T_FINAL_TX_DELAY in ms plus OS scheduling jitter. */
+#define T_PASSIVE_TX_WAIT_MS     10U            /* ms */
 
 /** @brief Number of consecutive SYNC timeouts before a slave self-promotes
  *  to master. Keep small (2–3) to recover quickly from a missing master.

@@ -13,12 +13,14 @@ static void msg_decode_poll    (const dwm_rx_frame_t *frame, msg_poll_t     *out
 static void msg_decode_response(const dwm_rx_frame_t *frame, msg_response_t *out);
 static void msg_decode_final   (const dwm_rx_frame_t *frame, msg_final_t    *out);
 static void msg_decode_share   (const dwm_rx_frame_t *frame, msg_share_t    *out);
+static void msg_decode_passive (const dwm_rx_frame_t *frame, msg_passive_t  *out);
 
 static uint16_t msg_encode_sync    (const msg_sync_t *in, uint8_t *buf);
 static uint16_t msg_encode_poll    (const msg_poll_t *in, uint8_t *buf);
 static uint16_t msg_encode_response(const msg_response_t *in, uint8_t *buf);
 static uint16_t msg_encode_final   (const msg_final_t *in, uint8_t *buf);
 static uint16_t msg_encode_share   (const msg_share_t *in, uint8_t *buf);
+static uint16_t msg_encode_passive (const msg_passive_t *in, uint8_t *buf);
 
 /* ── Public API ─────────────────────────────────────────────────────────── */
 
@@ -82,6 +84,10 @@ void msg_decode(const dwm_rx_frame_t *receive_frame, msg_t *msg_decoded)
             msg_decode_share   (receive_frame, &msg_decoded->data.share);
             msg_decoded->len = sizeof(msg_share_t);
             break;
+        case MSG_TYPE_PASSIVE:
+            msg_decode_passive   (receive_frame, &msg_decoded->data.passive);
+            msg_decoded->len = sizeof(msg_passive_t);
+            break;
 
         default:
             msg_decoded->type = MSG_TYPE_ERR;
@@ -124,6 +130,8 @@ dwm_tx_frame_t msg_encode(const msg_t *msg)
             frame.len = msg_encode_final   (&msg->data.final,    buf);  break;
         case MSG_TYPE_SHARE:
             frame.len = msg_encode_share   (&msg->data.share,    buf);  break;
+        case MSG_TYPE_PASSIVE:
+            frame.len = msg_encode_passive (&msg->data.passive,    buf);  break;
         default:
             break;
     }
@@ -355,6 +363,73 @@ static uint16_t msg_encode_share(const msg_share_t *in, uint8_t *buf)
     return MSG_PAYLOAD_OFFSET_SHARE_SLEEP + sizeof(uint32_t);
 }
 
+
+/**
+ * @brief Decode a PASSIVE message payload.
+ *
+ * @param[in]  frame  Raw RX frame.
+ * @param[out] out    Decoded passive struct to populate.
+ */
+static void msg_decode_passive(const dwm_rx_frame_t *frame, msg_passive_t *out)
+{
+    const uint8_t *p = &frame->data[MSG_PAYLOAD_OFFSET_SEQ];
+
+    /* Zero upper bytes of all uint64_t fields — only 5 bytes come off the wire. */
+    memset(out, 0, sizeof(*out));
+
+    out->seq_num = *p++;
+
+    memcpy(&out->poll_rx_ts,    p, MSG_TS_LEN); p += MSG_TS_LEN;
+    memcpy(&out->resp_rx_ts,    p, MSG_TS_LEN); p += MSG_TS_LEN;
+    memcpy(&out->final_rx_ts,   p, MSG_TS_LEN); p += MSG_TS_LEN;
+    memcpy(&out->passive_tx_ts, p, MSG_TS_LEN); p += MSG_TS_LEN;
+
+    out->entry_count = *p++;
+
+    for (int i = 0; i < out->entry_count && i < (NETWORK_MAX_PEERS - 2); i++) {
+        memcpy(&out->entries[i], p, MSG_TS_LEN);
+        p += MSG_TS_LEN;
+    }
+}
+
+/**
+ * @brief Encode a PASSIVE message payload into the wire buffer.
+ *
+ * Wire layout:
+ * @code
+ * [SEQ]           1 byte
+ * [POLL_RX_TS]    5 bytes  (40-bit, little-endian)
+ * [RESP_RX_TS]    5 bytes
+ * [FINAL_RX_TS]   5 bytes
+ * [PASSIVE_TX_TS] 5 bytes
+ * [ENTRY_COUNT]   1 byte
+ * [ENTRIES]       entry_count × 5 bytes
+ * @endcode
+ *
+ * @param[in]  in   Populated passive struct.
+ * @param[out] buf  Output buffer.
+ * @return          Total bytes written.
+ */
+static uint16_t msg_encode_passive(const msg_passive_t *in, uint8_t *buf)
+{
+    uint8_t *p = &buf[MSG_PAYLOAD_OFFSET_SEQ];
+
+    *p++ = in->seq_num;
+
+    memcpy(p, &in->poll_rx_ts,    MSG_TS_LEN); p += MSG_TS_LEN;
+    memcpy(p, &in->resp_rx_ts,    MSG_TS_LEN); p += MSG_TS_LEN;
+    memcpy(p, &in->final_rx_ts,   MSG_TS_LEN); p += MSG_TS_LEN;
+    memcpy(p, &in->passive_tx_ts, MSG_TS_LEN); p += MSG_TS_LEN;
+
+    *p++ = in->entry_count;
+
+    for (int i = 0; i < in->entry_count; i++) {
+        memcpy(p, &in->entries[i], MSG_TS_LEN);
+        p += MSG_TS_LEN;
+    }
+
+    return (uint16_t)(p - buf);
+}
 
 static dwm_rx_frame_t make_rx_frame(const dwm_tx_frame_t *tx, int16_t rssi, int16_t fp)
 {

@@ -84,8 +84,6 @@ void StartRangingTask(void *argument) {
         position_calculate(result_etwr);
         uint32_t sleep_time = uwb_share (seq, result_etwr, 490); //TODO if output is 0 set to last times sleep_time
         osDelay(sleep_time);
-        
-    
     }
     
 

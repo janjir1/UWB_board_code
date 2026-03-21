@@ -43,3 +43,7 @@ void position_calculate(uwb_etwr_result_t result)
     uint32_t elapsed = osKernelGetTickCount() - t_start;
     if (elapsed < 10U) osDelay(10U - elapsed);
 }
+
+uint64_t position_calibrate_timestamp(uint64_t orig_timestamp){
+    return orig_timestamp-1;
+}
