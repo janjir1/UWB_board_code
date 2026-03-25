@@ -50,6 +50,9 @@ extern "C" {
  *  1 tick = 1 / (499.2 MHz × 128) ≈ 15.65 ps  →  63 898 ticks/µs. */
 #define UWB_US_TO_TICKS(us)    ((uint64_t)((us) * 63898ULL))
 
+
+
+
 /** @brief Master RX window waiting for RESPONSE after POLL.
  *  Must exceed worst-case slave processing + TX scheduling time (~2 ms).
  *  TODO: reduce to ~20 ms once timing is stable. */
@@ -66,7 +69,7 @@ extern "C" {
  *  TODO: reduce to 1 500 µs if CPU budget allows, to lower ranging latency. */
 #define T_FINAL_TX_DELAY_TICKS UWB_US_TO_TICKS(3000)   /* ≈ 191 694 000 ticks */
 
-#define T_PASSIVE_TX_ASAP_TICKS UWB_US_TO_TICKS(300)   /* ≈ 191 694 000 ticks */
+#define T_PASSIVE_TX_ASAP_TICKS UWB_US_TO_TICKS(1000)  
 
 /** @brief Timeout waiting for TXFRS event after scheduling the delayed FINAL.
  *  Must exceed T_FINAL_TX_DELAY in ms plus OS scheduling jitter. */

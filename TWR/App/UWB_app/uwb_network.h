@@ -340,6 +340,13 @@ bool    network_set_passive_observation(uint8_t index, const passive_observation
 void    network_increment_passive_count(void);
 uint8_t network_get_passive_count(void);
 
+uint16_t network_get_passive_device_id(uint8_t index);
+uint64_t network_get_passive_ss_tx(uint8_t index);
+uint64_t network_get_passive_twr_obs_poll_rx(uint8_t index);
+uint64_t network_get_passive_twr_obs_resp_rx(uint8_t index);
+uint64_t network_get_passive_twr_obs_final_rx(uint8_t index);
+uwb_rx_meas_t network_get_passive_ss_rx(uint8_t index);
+
 bool network_set_passive_device_id(uint8_t index, uint16_t id);
 int8_t network_get_peer_index(uint16_t id);
 

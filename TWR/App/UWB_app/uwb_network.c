@@ -84,8 +84,10 @@ network_t *network_get_network(void)
 uint8_t network_fill_peer_ids(uint16_t *out_ids, uint8_t max_count)
 {
     uint8_t count = 0;
-    for (int i = 0; i < net.count && count < max_count; i++)
+    for (int i = 0; i < net.count && count < max_count; i++) {
+        if (net.peers[i].id == net.self.id) continue; /* skip self */
         out_ids[count++] = net.peers[i].id;
+    }
     return count;
 }
 
@@ -184,10 +186,10 @@ void network_set_self_pos(const float pos[3], float uncertainty)
 
 uint16_t network_get_highest_uncertainty(void)
 {
-    uint16_t target_id  = 0;
-    float    highest    = -1.0f;
-
+    uint16_t target_id = 0;
+    float highest = -1.0f;
     for (int i = 0; i < net.count; i++) {
+        if (net.peers[i].id == net.self.id) continue; /* skip self */
         if (net.peers[i].uncertainty > highest) {
             highest   = net.peers[i].uncertainty;
             target_id = net.peers[i].id;
@@ -195,6 +197,10 @@ uint16_t network_get_highest_uncertainty(void)
     }
     return target_id;
 }
+
+
+
+
 
 /* -----------------------------------------------------------------------
  * Measurements
@@ -396,4 +402,40 @@ int8_t network_get_peer_index(uint16_t id)
             return i;
     }
     return -1;
+}
+
+uint16_t network_get_passive_device_id(uint8_t index)
+{
+    if (index >= NETWORK_MAX_PEERS - 2) return 0;
+    return net.measurements.passive_device_id[index];
+}
+
+uint64_t network_get_passive_ss_tx(uint8_t index)
+{
+    if (index >= NETWORK_MAX_PEERS - 2) return 0;
+    return net.measurements.ss_twr[index].passive_tx;
+}
+
+uint64_t network_get_passive_twr_obs_poll_rx(uint8_t index)
+{
+    if (index >= NETWORK_MAX_PEERS - 2) return 0;
+    return net.measurements.twr_observations[index].poll_rx;
+}
+
+uint64_t network_get_passive_twr_obs_resp_rx(uint8_t index)
+{
+    if (index >= NETWORK_MAX_PEERS - 2) return 0;
+    return net.measurements.twr_observations[index].resp_rx;
+}
+
+uint64_t network_get_passive_twr_obs_final_rx(uint8_t index)
+{
+    if (index >= NETWORK_MAX_PEERS - 2) return 0;
+    return net.measurements.twr_observations[index].final_rx;
+}
+
+uwb_rx_meas_t network_get_passive_ss_rx(uint8_t index)
+{
+    if (index >= NETWORK_MAX_PEERS - 2) return (uwb_rx_meas_t){0};
+    return net.measurements.ss_twr[index].passive_rx;
 }
