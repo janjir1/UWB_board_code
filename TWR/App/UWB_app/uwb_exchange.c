@@ -24,6 +24,7 @@ static bool              uwb_send_FINAL(uint8_t seq_num, uint16_t target_id);
 static uwb_etwr_result_t uwb_tdoa_receiver();
 static uwb_etwr_result_t uwb_tdoa_sender();
 static uwb_etwr_result_t uwb_tdoa_initiator();
+static void remove_silent_passive_peers(const uint16_t *expected_ids, uint8_t expected_count, uint8_t heard_count);
 
 /* -----------------------------------------------------------------------
  * Internal macros
@@ -987,6 +988,19 @@ static uwb_etwr_result_t uwb_tdoa_receiver()
     uint8_t expected_count = network_get_count() - 2;
     mprintf("PASSIVE_RX - expecting %d\r\n", expected_count);
 
+    // create expected members id list
+    uint8_t peer_count = 0;
+    const node_t *peers = network_get_peers(&peer_count);
+
+    uint16_t expected_ids[NETWORK_MAX_PEERS - 2];
+    memset(expected_ids, 0, sizeof(expected_ids));
+    uint8_t position = 0;
+
+    for (uint8_t i = 1; i < peer_count; i++) {
+        if (peers[i].id == network_get_ownid()) continue;
+        expected_ids[position++] = peers[i].id;
+    }
+
     dwm_rx_flush();
 
     dwm_rx_frame_t rx_frame = {0};
@@ -998,6 +1012,7 @@ static uwb_etwr_result_t uwb_tdoa_receiver()
         uint32_t elapsed = osKernelGetTickCount() - t_start;
         if (elapsed >= wait_time) {
             mprintf("PASSIVE_RX - window expired (%d/%d)\r\n", idx, expected_count);
+            remove_silent_passive_peers(expected_ids, position, idx);
             return UWB_TWR_TIMEOUT;
         }
 
@@ -1041,7 +1056,7 @@ static uwb_etwr_result_t uwb_tdoa_receiver()
                     mprintf("PASSIVE_RX - all received\r\n");
                     return UWB_TWR_RECEIVED;
                 }
-                //TODO remove peers that didnt send this from network
+
                 osDelay(2);
             } else {
                 mprintf("PASSIVE_RX - skip type 0x%02X\r\n", rx_msg.type);
@@ -1054,6 +1069,7 @@ static uwb_etwr_result_t uwb_tdoa_receiver()
 
         case DWM_RX_TIMEOUT:
             mprintf("PASSIVE_RX - timeout\r\n");
+            remove_silent_passive_peers(expected_ids, position, idx);
             return UWB_TWR_TIMEOUT;
 
         }
@@ -1061,6 +1077,33 @@ static uwb_etwr_result_t uwb_tdoa_receiver()
     //return UWB_TWR_RECEIVED;
 }
 
+/**
+ * @brief Remove peers that failed to send a PASSIVE report this round.
+ *
+ * @param expected_ids  IDs of nodes expected to send PASSIVE.
+ * @param expected_count Number of entries in expected_ids[].
+ * @param heard_count   Number of PASSIVE reports actually received (idx).
+ */
+
+//TODO test this - need 4 nodes
+static void remove_silent_passive_peers(const uint16_t *expected_ids,
+                                        uint8_t expected_count,
+                                        uint8_t heard_count)
+{
+    for (uint8_t i = 0; i < expected_count; i++) {
+        bool found = false;
+        for (uint8_t j = 0; j < heard_count; j++) {
+            if (network_get_passive_device_id(j) == expected_ids[i]) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            mprintf("PASSIVE_RX - removing silent 0x%04X\r\n", expected_ids[i]);
+            network_remove_peer(expected_ids[i]);
+        }
+    }
+}
 
 /**
  * @brief Listen for preceding PASSIVE reports, then transmit own (passive node side).
@@ -1291,7 +1334,7 @@ static uwb_etwr_result_t uwb_tdoa_initiator()
 
 uwb_etwr_result_t uwb_twr_test(uwb_sync_result_t sync_result)
 {
-    mprintf("UWBeTWRTEST - seq=%d sync=%d\r\n", (network_get_expected_seq_num()+1) , sync_result);
+    mprintf("UWBeTWRTEST - seq=%d sync=%d\r\n", network_get_expected_seq_num() , sync_result);
 
     uwb_etwr_result_t result = uwb_extended_twr(sync_result);
 
