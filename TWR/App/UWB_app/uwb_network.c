@@ -117,8 +117,6 @@ void network_update_peers_from_sync(uint16_t master_id,
     /* Add all peers from SYNC, preserving existing data if known */
     for (int i = 0; i < peer_count && new_count < NETWORK_MAX_PEERS; i++) {
         //if (peer_ids[i] == net.self.id) continue; /* never add self */
-        //TODO i need self in the list, if it breaks something, im sorry
-        //BUG If there is s bug wuth peers, its this
 
         node_t *existing = find_peer(peer_ids[i]);
         if (existing) {
@@ -438,4 +436,14 @@ uwb_rx_meas_t network_get_passive_ss_rx(uint8_t index)
 {
     if (index >= NETWORK_MAX_PEERS - 2) return (uwb_rx_meas_t){0};
     return net.measurements.ss_twr[index].passive_rx;
+}
+
+void network_set_expected_seq_num(uint8_t seq_num)
+{
+    net.expected_seq_num = seq_num;
+}
+
+uint8_t network_get_expected_seq_num(void)
+{
+    return net.expected_seq_num;
 }

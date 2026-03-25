@@ -21,9 +21,9 @@ static bool              uwb_sync_to_all_id(uint8_t seq_num);
 static bool              uwb_send_POLL(uint8_t seq_num, uint16_t target_id);
 static bool              uwb_send_RESPONSE(uint8_t seq_num, uint16_t target_id);
 static bool              uwb_send_FINAL(uint8_t seq_num, uint16_t target_id);
-static uwb_etwr_result_t uwb_tdoa_receiver(uint8_t seq_num);
-static uwb_etwr_result_t uwb_tdoa_sender(uint8_t seq_num);
-static uwb_etwr_result_t uwb_tdoa_initiator(uint8_t seq_num);
+static uwb_etwr_result_t uwb_tdoa_receiver();
+static uwb_etwr_result_t uwb_tdoa_sender();
+static uwb_etwr_result_t uwb_tdoa_initiator();
 
 /* -----------------------------------------------------------------------
  * Internal macros
@@ -143,16 +143,28 @@ static bool sync_peer_contains(const msg_sync_t *sync, uint16_t id)
         if (_e < T_SYNC_RX_ANSWER) osDelay(T_SYNC_RX_ANSWER - _e); \
     } while (0)
 
+static bool seq_ok(uint8_t rx_seq, const char *tag)
+{
+    uint8_t exp = network_get_expected_seq_num();
+    if (rx_seq != exp) {
+        mprintf("%s - bad seq rx=%d exp=%d\r\n", tag, rx_seq, exp);
+        return false;
+    }
+    return true;
+}
 
-uwb_sync_result_t uwb_sync(uint8_t seq_num)
+uwb_sync_result_t uwb_sync()
 {
 
     dwt_writesysstatuslo(DWT_INT_RXFTO_BIT_MASK    |   /* RX frame wait timeout */
-                            DWT_INT_RXPTO_BIT_MASK);    /* RX SFD timeout */;
+                            DWT_INT_RXPTO_BIT_MASK);    /* RX SFD timeout */
     dwm_rx_flush();
 
     if (network_is_master()) {
         osDelay(2);
+
+        uint8_t seq_num = network_get_expected_seq_num() + 1;
+        network_set_expected_seq_num(seq_num);
 
         /* ---- MASTER: broadcast SYNC then collect one reply ---- */
         if (!uwb_sync_to_all_id(seq_num)) {
@@ -249,6 +261,7 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
                                 network_update_peers_from_sync(rx_msg.sender,
                                                                rx_msg.data.sync.peer_ids,
                                                                rx_msg.data.sync.peer_count);
+                                network_set_expected_seq_num(rx_msg.data.sync.seq_num);
                             } else {
                                 mprintf("UWBsync [SLAVE] - Unexpected master 0x%04X, expected 0x%04X\r\n",
                                         rx_msg.sender, network_get_master());
@@ -258,6 +271,7 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
                             network_update_peers_from_sync(rx_msg.sender,
                                                            rx_msg.data.sync.peer_ids,
                                                            rx_msg.data.sync.peer_count);
+                            network_set_expected_seq_num(rx_msg.data.sync.seq_num);
                         }
 
                         if (sync_peer_contains(&rx_msg.data.sync, network_get_ownid())) {
@@ -372,7 +386,7 @@ uwb_sync_result_t uwb_sync(uint8_t seq_num)
  */
 
 
-uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_result)
+uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
 {
     switch (sync_result) {
 
@@ -394,7 +408,7 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
 
             osDelay(2); //wait for other to start listening
 
-            if (!uwb_send_POLL(seq_num, target_id)) {
+            if (!uwb_send_POLL(network_get_expected_seq_num(), target_id)) {
                 mprintf("UWB_eTWR [MASTER] - Failed to send POLL\r\n");
                 return UWB_TWR_TX_FAILED;
             }
@@ -423,10 +437,14 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
                         rx_msg.receiver == network_get_ownid() &&
                         rx_msg.sender   == target_id) {
 
+                        if (!seq_ok(rx_msg.data.response.seq_num, "RESP")) {
+                            break;
+                        }
+
                         /* Save resp_rx — uwb_send_FINAL reads it via network_get_twr() */
                         network_set_twr_resp_rx(&RX_MEAS_FROM_FRAME(rx_frame));
 
-                        if (!uwb_send_FINAL(seq_num, target_id)) {
+                        if (!uwb_send_FINAL(network_get_expected_seq_num(), target_id)) {
                             mprintf("UWB_eTWR [MASTER] - Failed to send FINAL\r\n");
                             return UWB_TWR_TX_FAILED;
                         }
@@ -436,7 +454,7 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
                         /* Hand master role to target — it holds all timestamps
                          * and will compute the range. */
                         network_set_master(target_id);
-                        return uwb_tdoa_initiator(seq_num);
+                        return uwb_tdoa_initiator();
 
 
                     } else {
@@ -492,11 +510,15 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
 
                         if (rx_msg.receiver == network_get_ownid()) {
                             /* Responder path */
-                            //no time to send
+
+                            if (!seq_ok(rx_msg.data.poll.seq_num, "POLL")) {
+                                break;
+                            }
+
                             //mprintf("UWB_eTWR [SLAVE] - POLL received, sending RESPONSE\r\n");
                             network_set_twr_poll_rx(&RX_MEAS_FROM_FRAME(rx_frame));
 
-                            if (!uwb_send_RESPONSE(seq_num, network_get_master())) {
+                            if (!uwb_send_RESPONSE(network_get_expected_seq_num(), network_get_master())) {
                                 mprintf("UWB_eTWR [SLAVE] - Failed to send RESPONSE\r\n");
                                 return UWB_TWR_TX_FAILED;
                             }
@@ -504,6 +526,9 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
 
                         } else if (network_is_acknowledged()) {
                             /* Passive observer path */
+                            if (!seq_ok(rx_msg.data.poll.seq_num, "POLL")) {
+                                break;
+                            }
                             mprintf("UWB_eTWR [SLAVE] - POLL observed passively (initiator: 0x%04X, target: 0x%04X)\r\n",
                                     rx_msg.sender, rx_msg.receiver);
                             network_set_obs_poll_rx(&RX_MEAS_FROM_FRAME(rx_frame));
@@ -520,6 +545,10 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
                             return UWB_TWR_UNEXPECTED_MASTER;
                         }
                         if (network_is_acknowledged()) {
+
+                            if (!seq_ok(rx_msg.data.response.seq_num, "RESP")) {
+                                break;
+                            }
                             mprintf("UWB_eTWR [SLAVE] - RESPONSE observed passively\r\n");
                             network_set_obs_resp_rx(&RX_MEAS_FROM_FRAME(rx_frame));
                             /* Do NOT return — FINAL still expected */
@@ -534,6 +563,10 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
                         }
 
                         if (rx_msg.receiver == network_get_ownid()) {
+
+                            if (!seq_ok(rx_msg.data.final.seq_num, "FINAL")) {
+                                break;
+                            }
                             /* Responder — exchange complete, compute range */
                             mprintf("UWB_eTWR [SLAVE] - FINAL received, exchange complete\r\n");
 
@@ -551,14 +584,18 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
                             });
 
                             network_set_master(network_get_ownid());
-                            return uwb_tdoa_receiver(seq_num);
+                            return uwb_tdoa_receiver();
 
                         } else if (network_is_acknowledged()) {
+
+                            if (!seq_ok(rx_msg.data.final.seq_num, "FINAL")) {
+                                break;
+                            }
                             /* Passive observer — full set of three frames captured */
                             mprintf("UWB_eTWR [SLAVE] - FINAL observed passively\r\n");
                             network_set_obs_final_rx(&RX_MEAS_FROM_FRAME(rx_frame));
                             network_set_master(rx_msg.receiver);
-                            return uwb_tdoa_sender(seq_num);
+                            return uwb_tdoa_sender();
 
                         } else {
                             
@@ -599,7 +636,7 @@ uwb_etwr_result_t uwb_extended_twr(uint8_t seq_num, uwb_sync_result_t sync_resul
 }
 
 
-uint32_t uwb_share (uint8_t seq_num, uwb_etwr_result_t etwr_result, uint32_t sleep_time){
+uint32_t uwb_share (uwb_etwr_result_t etwr_result, uint32_t sleep_time){
 
     switch (etwr_result) {
 
@@ -607,7 +644,7 @@ uint32_t uwb_share (uint8_t seq_num, uwb_etwr_result_t etwr_result, uint32_t sle
         {
             osDelay(2);
             msg_share_t share_msg = {
-                .seq_num    = seq_num,
+                .seq_num    = network_get_expected_seq_num(),
                 .sleep_time = sleep_time,
             };
 
@@ -660,6 +697,10 @@ uint32_t uwb_share (uint8_t seq_num, uwb_etwr_result_t etwr_result, uint32_t sle
                     msg_decode(&rx_frame, &rx_msg);
 
                     if (rx_msg.type == MSG_TYPE_SHARE) {
+                        if (!seq_ok(rx_msg.data.share.seq_num, "SHARE")) {
+                            break;
+                        }
+
                         mprintf("UWB_share [SLAVE] - Set sleep time: 0x%04X\r\n", (rx_msg.data.share.sleep_time - T_EARLY_WKUP));
                         return (rx_msg.data.share.sleep_time - T_EARLY_WKUP);
                     }
@@ -936,7 +977,7 @@ static bool uwb_send_FINAL(uint8_t seq_num, uint16_t target_id)
  * @note 
  */
 
-static uwb_etwr_result_t uwb_tdoa_receiver(uint8_t seq_num)
+static uwb_etwr_result_t uwb_tdoa_receiver()
 {   
     if (network_get_count() <= 2) {
         mprintf("PASSIVE_RX - too few nodes\r\n");
@@ -968,6 +1009,9 @@ static uwb_etwr_result_t uwb_tdoa_receiver(uint8_t seq_num)
             msg_decode(&rx_frame, &rx_msg);
 
             if (rx_msg.type == MSG_TYPE_PASSIVE) {
+                if (!seq_ok(rx_msg.data.passive.seq_num, "PASSIVE")) {
+                    break;
+                }
                 if (rx_msg.receiver != network_get_ownid()) {
                     mprintf("PASSIVE_RX - wrong rx 0x%04X\r\n", rx_msg.receiver);
                     return UWB_TWR_UNEXPECTED_MASTER;
@@ -1027,7 +1071,7 @@ static uwb_etwr_result_t uwb_tdoa_receiver(uint8_t seq_num)
  * @param seq_num Exchange sequence number.
  * @return UWB_TWR_RECEIVED_PASSIVE on success, UWB_TWR_TIMEOUT/TX_FAILED on error.
  */
-static uwb_etwr_result_t uwb_tdoa_sender(uint8_t seq_num)
+static uwb_etwr_result_t uwb_tdoa_sender()
 {
     //removing master from list, so devies are not waiting for him to send message - he never will
     //last entry on the list is now at his position, should not matter, as all devices do the same thing
@@ -1068,6 +1112,9 @@ static uwb_etwr_result_t uwb_tdoa_sender(uint8_t seq_num)
                 if (rx_msg.receiver != network_get_master()) {
                     mprintf("PASSIVE_TX - wrong master 0x%04X\r\n", rx_msg.receiver);
                     return UWB_TWR_UNEXPECTED_MASTER;
+                }
+                if (!seq_ok(rx_msg.data.passive.seq_num, "PASSIVE")) {
+                    break;
                 }
                 uint64_t ts = position_calibrate_timestamp(rx_frame.rx_timestamp);
                 network_set_passive_report_rx(idx, ts);
@@ -1113,7 +1160,7 @@ static uwb_etwr_result_t uwb_tdoa_sender(uint8_t seq_num)
     uint8_t entry_count = network_get_self_passive_count();
 
     msg_passive_t passive_msg = {
-        .seq_num       = seq_num,
+        .seq_num       = network_get_expected_seq_num(),
         .poll_rx_ts    = obs->poll_rx.ts,
         .resp_rx_ts    = obs->resp_rx.ts,
         .final_rx_ts   = obs->final_rx.ts,
@@ -1148,7 +1195,7 @@ static uwb_etwr_result_t uwb_tdoa_sender(uint8_t seq_num)
     if (delta != 0)
         mprintf("PASSIVE_TX - delta %ld\r\n", delta);
 
-    mprintf("PASSIVE_TX - sent seq=%d n=%d\r\n", seq_num, entry_count);
+    mprintf("PASSIVE_TX - sent seq=%d n=%d\r\n", network_get_expected_seq_num(), entry_count);
     return UWB_TWR_RECEIVED_PASSIVE;
 
     
@@ -1163,7 +1210,7 @@ static uwb_etwr_result_t uwb_tdoa_sender(uint8_t seq_num)
  * @param seq_num Exchange sequence number.
  * @return UWB_TWR_EXCHANGE_COMPLETE on success, UWB_TWR_TIMEOUT on expiry.
  */
-static uwb_etwr_result_t uwb_tdoa_initiator(uint8_t seq_num)
+static uwb_etwr_result_t uwb_tdoa_initiator()
 {
     if (network_get_count() <= 2) {
         mprintf("PASSIVE_WAIT - too few nodes\r\n");
@@ -1195,9 +1242,13 @@ static uwb_etwr_result_t uwb_tdoa_initiator(uint8_t seq_num)
             msg_decode(&rx_frame, &rx_msg);
 
             if (rx_msg.type == MSG_TYPE_PASSIVE) {
+
                 if (rx_msg.receiver != network_get_master()) {
                     mprintf("PASSIVE_WAIT - wrong rx 0x%04X\r\n", rx_msg.receiver);
                     return UWB_TWR_UNEXPECTED_MASTER;
+                }
+                if (!seq_ok(rx_msg.data.passive.seq_num, "PASS")) {
+                    break;
                 }
                 idx++;
                 if (idx == expected_count) {
@@ -1238,11 +1289,11 @@ static uwb_etwr_result_t uwb_tdoa_initiator(uint8_t seq_num)
 
  */
 
-uwb_etwr_result_t uwb_twr_test(uint8_t seq_num, uwb_sync_result_t sync_result)
+uwb_etwr_result_t uwb_twr_test(uwb_sync_result_t sync_result)
 {
-    mprintf("UWBeTWRTEST - seq=%d sync=%d\r\n", seq_num, sync_result);
+    mprintf("UWBeTWRTEST - seq=%d sync=%d\r\n", (network_get_expected_seq_num()+1) , sync_result);
 
-    uwb_etwr_result_t result = uwb_extended_twr(seq_num, sync_result);
+    uwb_etwr_result_t result = uwb_extended_twr(sync_result);
 
     switch (result) {
         case UWB_TWR_EXCHANGE_COMPLETE:  mprintf("UWBeTWRTEST - EXCHANGE_COMPLETE\r\n");  break;

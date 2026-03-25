@@ -173,6 +173,7 @@ typedef struct {
  */
 typedef struct {
     node_t   peers[NETWORK_MAX_PEERS]; /**< Known active peers (excludes self). */
+    uint8_t  expected_seq_num;          //current seq number
     uint8_t  count;                    /**< Number of valid entries in @c peers. */
     uint16_t master_id;                /**< ID of the current master.
                                         *   Equals @c self.id when this device is master. */
@@ -346,6 +347,9 @@ uint64_t network_get_passive_twr_obs_poll_rx(uint8_t index);
 uint64_t network_get_passive_twr_obs_resp_rx(uint8_t index);
 uint64_t network_get_passive_twr_obs_final_rx(uint8_t index);
 uwb_rx_meas_t network_get_passive_ss_rx(uint8_t index);
+
+void    network_set_expected_seq_num(uint8_t seq_num);
+uint8_t network_get_expected_seq_num(void);
 
 bool network_set_passive_device_id(uint8_t index, uint16_t id);
 int8_t network_get_peer_index(uint16_t id);
