@@ -35,7 +35,7 @@ extern "C" {
  * Duration of one full SYNC → TWR → SHARE cycle. Both master and slave
  * sleep for approximately this long between cycles.
  */
-#define T_PERIOD    500U    /* ms */
+#define T_PERIOD    200U    /* ms */
 
 /**
  * @brief DW3xxx deep-sleep duration (ms).
@@ -43,7 +43,7 @@ extern "C" {
  * How long the radio is held in deep-sleep inside each cycle. Must be
  * less than T_PERIOD to leave time for the active exchange phase.
  */
-#define DEEP_SLEEP  500U    /* ms */
+#define DEEP_SLEEP  200U    /* ms */
 
 /**
  * @brief Slave RX window for the initial SYNC broadcast (ms).
@@ -62,7 +62,7 @@ extern "C" {
  *
  * @todo Reduce once per-device stagger is tuned.
  */
-#define T_SYNC_RX_ANSWER    20U     /* ms */
+#define T_SYNC_RX_ANSWER    10U     /* ms */
 
 /**
  * @brief Slave RX window waiting for a SHARE broadcast (ms).
@@ -157,7 +157,7 @@ extern "C" {
  *
  * Equals approximately 191 694 000 ticks.
  *
- * @todo Reduce to 1 500 µs if CPU budget allows, to lower ranging latency.
+ * @todo Reduce if CPU budget allows, to lower ranging latency.
  */
 #define T_FINAL_TX_DELAY_TICKS  UWB_US_TO_TICKS(3000)
 
@@ -167,7 +167,7 @@ extern "C" {
  * Used when the passive device schedules its own transmission as soon as
  * possible after capturing the full TWR exchange (1 000 µs guard).
  */
-#define T_PASSIVE_TX_ASAP_TICKS UWB_US_TO_TICKS(1000)
+#define T_PASSIVE_TX_ASAP_TICKS UWB_US_TO_TICKS(500)
 
 /**
  * @brief Timeout waiting for TXFRS after scheduling the delayed FINAL (ms).
