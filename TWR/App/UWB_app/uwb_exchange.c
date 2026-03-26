@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "main.h"
 #include "../Generic/my_print.h"
 #include "DWM3000_setup.h"
 #include "DWM3000_driver.h"
@@ -52,37 +53,37 @@ static void remove_silent_passive_peers(const uint16_t *expected_ids, uint8_t ex
  * Internal helpers
  * ----------------------------------------------------------------------- */
 
-/**
- * @brief Blocking delay derived from device ID.
+ /**
+ * @brief Sub-microsecond busy-wait using a hardware timer.
  *
- * Spreads transmit attempts across a 10 ms window so that devices do not
- * all reply simultaneously. The lower byte of the ID is XOR-folded with
- * the upper byte to improve distribution when devices share a common lower
- * byte (e.g. 0x1042 and 0x2042). Delay range: 0–9 ms, 1 ms resolution.
+ * @param us Delay in microseconds.
+ */
+
+static void delay_us(uint32_t us)
+{
+    __HAL_TIM_SET_COUNTER(&htim2, 0);
+    while (__HAL_TIM_GET_COUNTER(&htim2) < us);
+}
+
+/**
+ * @brief Staggered TX delay derived from device ID.
+ *
+ * Spreads devices across a 0–9999 µs window to reduce simultaneous
+ * transmissions. Uses osDelay() for full milliseconds and delay_us()
+ * for the sub-millisecond remainder.
  *
  * @param device_id This device's 16-bit network ID.
  */
 static void uwb_id_delay(uint16_t device_id)
 {
-    uint32_t delay_ms = ((device_id & 0xFF) ^ (device_id >> 8)) % 10;
-    osDelay(delay_ms);
+    uint32_t total_us = ((device_id & 0xFF) ^ (device_id >> 8)) % 10000;
+    uint32_t ms = total_us / 1000;
+    uint32_t us = total_us % 1000;
+
+    if (ms > 0) osDelay(ms);
+    if (us > 0) delay_us(us);
 }
 
-
-/**
- * @brief Sub-microsecond busy-wait using a hardware timer.
- *
- * @param us Delay in microseconds.
- * @note TODO: verify htim2 is initialised and running before first use.
- *       Replace with a DWT cycle-counter version if htim2 is unavailable.
- */
-/*
-static void delay_us(uint32_t us)
-{
-    HAL_TIM_SET_COUNTER(&htim2, 0);
-    while (HAL_TIM_GET_COUNTER(&htim2) < us);
-}
-*/
 /**
  * @brief Check whether a given ID appears in a SYNC message's peer list.
  *
@@ -96,6 +97,23 @@ static bool sync_peer_contains(const msg_sync_t *sync, uint16_t id)
         if (sync->peer_ids[i] == id) return true;
     return false;
 }
+
+#define SYNC_PAD(t_start)                                            \
+    do {                                                             \
+        uint32_t _e = osKernelGetTickCount() - (t_start);           \
+        if (_e < T_SYNC_RX_ANSWER) osDelay(T_SYNC_RX_ANSWER - _e); \
+    } while (0)
+
+static bool seq_ok(uint8_t rx_seq, const char *tag)
+{
+    uint8_t exp = network_get_expected_seq_num();
+    if (rx_seq != exp) {
+        mprintf("%s - bad seq rx=%d exp=%d\r\n", tag, rx_seq, exp);
+        return false;
+    }
+    return true;
+}
+
 
 /* -----------------------------------------------------------------------
  * Public API — uwb_sync
@@ -125,8 +143,6 @@ static bool sync_peer_contains(const msg_sync_t *sync, uint16_t id)
  *
  * @note The DWM3000 must be awake before calling this function.
  *
- * @param seq_num Sequence number to embed in the outgoing SYNC frame.
- *
  * @retval UWB_SYNC_MASTER            Master SYNC sent, one peer acknowledged.
  * @retval UWB_SYNC_MASTER_NO_REPLY   Master SYNC sent, no replies received.
  * @retval UWB_SYNC_SLAVE_ACKNOWLEDGED Own ID confirmed in master's peer list.
@@ -136,24 +152,6 @@ static bool sync_peer_contains(const msg_sync_t *sync, uint16_t id)
  * @retval UWB_SYNC_NEW_SLAVE         Yielded to a higher-ID master.
  * @retval UWB_SYNC_TX_FAILED         SYNC TX failed at hardware level.
  */
-/** Pad remaining time so this function always exits exactly
- *  T_SYNC_RX_ANSWER ms after t_start, regardless of which path was taken. */
-#define SYNC_PAD(t_start)                                            \
-    do {                                                             \
-        uint32_t _e = osKernelGetTickCount() - (t_start);           \
-        if (_e < T_SYNC_RX_ANSWER) osDelay(T_SYNC_RX_ANSWER - _e); \
-    } while (0)
-
-static bool seq_ok(uint8_t rx_seq, const char *tag)
-{
-    uint8_t exp = network_get_expected_seq_num();
-    if (rx_seq != exp) {
-        mprintf("%s - bad seq rx=%d exp=%d\r\n", tag, rx_seq, exp);
-        return false;
-    }
-    return true;
-}
-
 uwb_sync_result_t uwb_sync()
 {
 
@@ -373,7 +371,6 @@ uwb_sync_result_t uwb_sync()
  * @note Timestamps are stored via the network measurement API and are
  *       available via network_get_twr() after the function returns.
  *
- * @param seq_num     Sequence number embedded in all outgoing frames.
  * @param sync_result Role determined by the preceding uwb_sync() call.
  *
  * @retval UWB_TWR_EXCHANGE_COMPLETE  Master: exchange finished successfully.
@@ -636,7 +633,17 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
     }
 }
 
-
+/**
+ * @brief Broadcast or receive the post-exchange SHARE frame.
+ *
+ * The responder (#UWB_TWR_RECEIVED) broadcasts a SHARE frame carrying the
+ * agreed sleep duration. All other roles wait and return the adjusted sleep
+ * time (minus #T_EARLY_WKUP). Returns 0 on TX failure or RX timeout.
+ *
+ * @param etwr_result Result from the preceding uwb_extended_twr() call.
+ * @param sleep_time  Sleep duration in ms to embed (responder only).
+ * @return Adjusted sleep time on success, 0 on timeout or TX failure.
+ */
 uint32_t uwb_share (uwb_etwr_result_t etwr_result, uint32_t sleep_time){
 
     switch (etwr_result) {
@@ -1076,6 +1083,7 @@ static uwb_etwr_result_t uwb_tdoa_receiver()
     }
     //return UWB_TWR_RECEIVED;
 }
+//TODO test this - need 4 nodes
 
 /**
  * @brief Remove peers that failed to send a PASSIVE report this round.
@@ -1084,8 +1092,6 @@ static uwb_etwr_result_t uwb_tdoa_receiver()
  * @param expected_count Number of entries in expected_ids[].
  * @param heard_count   Number of PASSIVE reports actually received (idx).
  */
-
-//TODO test this - need 4 nodes
 static void remove_silent_passive_peers(const uint16_t *expected_ids,
                                         uint8_t expected_count,
                                         uint8_t heard_count)
@@ -1111,7 +1117,6 @@ static void remove_silent_passive_peers(const uint16_t *expected_ids,
  * Waits for all nodes ahead in the peer list to transmit their PASSIVE frame,
  * recording their RX timestamps, then transmits own PASSIVE to the master.
  *
- * @param seq_num Exchange sequence number.
  * @return UWB_TWR_RECEIVED_PASSIVE on success, UWB_TWR_TIMEOUT/TX_FAILED on error.
  */
 static uwb_etwr_result_t uwb_tdoa_sender()
@@ -1250,7 +1255,6 @@ static uwb_etwr_result_t uwb_tdoa_sender()
  * Does not store any data — just waits for the PASSIVE window to complete
  * so the medium is clear before the next SYNC cycle begins.
  *
- * @param seq_num Exchange sequence number.
  * @return UWB_TWR_EXCHANGE_COMPLETE on success, UWB_TWR_TIMEOUT on expiry.
  */
 static uwb_etwr_result_t uwb_tdoa_initiator()
@@ -1327,11 +1331,8 @@ static uwb_etwr_result_t uwb_tdoa_initiator()
  * completed exchange, using two-word 32-bit formatting because mprintf
  * does not support %llX.
  *
- * @param seq_num     Forwarded to uwb_extended_twr().
  * @param sync_result Forwarded to uwb_extended_twr().
-
  */
-
 uwb_etwr_result_t uwb_twr_test(uwb_sync_result_t sync_result)
 {
     mprintf("UWBeTWRTEST - seq=%d sync=%d\r\n", network_get_expected_seq_num() , sync_result);
