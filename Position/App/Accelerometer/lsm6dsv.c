@@ -3,11 +3,13 @@
 #include <string.h>
 #include <stdbool.h>
 
+#include "cmsis_os2.h"
 #include "lsm6dsv_ST_example.h"
 
 #include "main.h"
 #include "../Generic/my_print.h"
 #include "stm32l4xx_hal.h"
+#include "imu.h"
 
 
 
@@ -26,7 +28,14 @@ void StartAcc(void *argument) {
     }
 
     //lsm6dsv_read_data_polling();
-    
+
+    imu_init();
+    imu_fifo_data_t fifo;
+
+    while(1){
+        osDelay(200);
+        imu_read_fifo(&fifo);
+    }
     vTaskDelete( NULL );
     while(1) { } 
 }

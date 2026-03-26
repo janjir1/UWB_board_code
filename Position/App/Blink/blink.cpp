@@ -10,7 +10,7 @@ public:
     void run() {
         int i = 0;
         while (true) {
-            HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
+            
 
             mprintf("Hello from STM32! Count: %d\r\n", i);
 

@@ -3,6 +3,7 @@ add_library(app STATIC
     Accelerometer/lsm6dsv.c
     Accelerometer/lsm6dsv_self_test.c
     Accelerometer/read_data_polling.c
+    Accelerometer/imu.c
 
     # Blink
     Blink/blink.cpp

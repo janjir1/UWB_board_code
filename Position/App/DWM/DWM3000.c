@@ -78,11 +78,13 @@ void StartRangingTask(void *argument) {
 
     while(1){
         mprintf("Starting sync\r\n");
+        HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
         uwb_sync_result_t result_sync = uwb_sync();
         mprintf("Sync result: %d\r\n", result_sync);
         uwb_etwr_result_t result_etwr = uwb_extended_twr(result_sync);
         position_calculate(result_etwr);
         uint32_t sleep_time = uwb_share (result_etwr, DEEP_SLEEP); //TODO if output is 0 set to last times sleep_time
+        HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
         osDelay(sleep_time);
     }
     
