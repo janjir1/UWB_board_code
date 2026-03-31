@@ -31,7 +31,7 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "cmsis_os.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -114,6 +114,9 @@ extern SPI_HandleTypeDef hspi1;
 extern UART_HandleTypeDef huart1;
 extern USART_HandleTypeDef husart2;
 extern TIM_HandleTypeDef htim2;
+
+extern osThreadId_t AccelerometerHandle;
+extern osThreadId_t RangingHandle;
 
 #define UWB_DEBUG
 /* USER CODE END Private defines */

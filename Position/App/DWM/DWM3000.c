@@ -38,7 +38,7 @@ void StartRangingTask(void *argument) {
         vTaskDelete( NULL );
         while(1) { } 
     }
-    osDelay(1000);
+    osDelay(200);
 
     passed = dwm_selftest();
     if (passed) {
@@ -48,7 +48,7 @@ void StartRangingTask(void *argument) {
         vTaskDelete( NULL );
         while(1) { } 
     }
-    osDelay(1000);
+    osDelay(200);
 
     passed = dwm_configure();
     if (passed) {
@@ -58,7 +58,7 @@ void StartRangingTask(void *argument) {
         vTaskDelete( NULL );
         while(1) { } 
     }
-    osDelay(1000);
+    osDelay(200);
 
     /*
     if (dwm_get_addr() == 0x506B) {
@@ -73,18 +73,17 @@ void StartRangingTask(void *argument) {
 
     network_init(dwm_get_addr());
 
-
-
+    osThreadFlagsWait(0x01, osFlagsWaitAll, osWaitForever);
 
     while(1){
         mprintf("Starting sync\r\n");
-        HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
+        HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
         uwb_sync_result_t result_sync = uwb_sync();
         mprintf("Sync result: %d\r\n", result_sync);
         uwb_etwr_result_t result_etwr = uwb_extended_twr(result_sync);
         position_calculate(result_etwr);
         uint32_t sleep_time = uwb_share (result_etwr, DEEP_SLEEP); //TODO if output is 0 set to last times sleep_time
-        HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
+        HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
         osDelay(sleep_time);
     }
     

@@ -30,11 +30,23 @@ void StartAcc(void *argument) {
     //lsm6dsv_read_data_polling();
 
     imu_init();
-    imu_fifo_data_t fifo;
+    osDelay(200);
+    imu_calibrate();
+
+    osThreadFlagsSet(RangingHandle, 0x01);
+
+    float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
+    uint32_t ticks_elapsed = 0;
 
     while(1){
-        osDelay(200);
+        osThreadFlagsWait(0x01, osFlagsWaitAll, osWaitForever);
+        mprintf("Starting IMU task\r\n");
+        imu_fifo_data_t fifo;
         imu_read_fifo(&fifo);
+        imu_integrate(&fifo, &pitch_rad, &speed_horiz, &vel_z, &ticks_elapsed);
+        osThreadFlagsSet(RangingHandle, 0x02);
+        mprintf("IMU data ready\r\n");
+        imu_print_results(pitch_rad, speed_horiz, vel_z, ticks_elapsed);
     }
     vTaskDelete( NULL );
     while(1) { } 

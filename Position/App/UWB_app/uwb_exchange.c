@@ -171,6 +171,9 @@ uwb_sync_result_t uwb_sync()
             return UWB_SYNC_TX_FAILED;        /* TX never happened — no padding */
         }
 
+        //start accelerometer calculation
+        osThreadFlagsSet(AccelerometerHandle, 0x01);
+
         /* t_start anchored to SYNC transmission */
         uint32_t t_start = osKernelGetTickCount();
         dwm_rx_frame_t rx_frame = {0};
@@ -251,6 +254,9 @@ uwb_sync_result_t uwb_sync()
 
                         /* t_start anchored to SYNC receipt */
                         uint32_t t_start = osKernelGetTickCount();
+
+                        //start accelerometer calculation
+                        osThreadFlagsSet(AccelerometerHandle, 0x01);
 
                         /* Validate / update master */
                         if (rx_msg.sender != network_get_master()) {
