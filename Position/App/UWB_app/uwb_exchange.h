@@ -137,7 +137,7 @@ extern "C" {
  * @todo Reduce to ~20 ms once timing is stable.
  */
 #define T_RESPONSE_RX_WAIT  100U    /* ms — conservative for testing */
-
+#define T_FINAL_RX_WAIT  100U
 /**
  * @brief Slave RX window covering the entire TWR exchange (ms).
  *
@@ -159,7 +159,7 @@ extern "C" {
  *
  * @todo Reduce if CPU budget allows, to lower ranging latency.
  */
-#define T_FINAL_TX_DELAY_TICKS  UWB_US_TO_TICKS(3000)
+#define T_FINAL_TX_ASAP_TICKS  UWB_US_TO_TICKS(800)
 
 /**
  * @brief Minimum delay before a passive observer's TX (ticks).

@@ -4,7 +4,7 @@
  *
  * Maintains a single static @ref network_t instance (@c net) that holds
  * peer state, master election state, and all measurement data for the
- * current DS-TWR exchange.  All public functions operate on this instance.
+ * current DS-TWR exchange. All public functions operate on this instance.
  */
 
 #include "cmsis_os.h"
@@ -30,9 +30,9 @@ static network_t net;
 /**
  * @brief Look up a peer by network ID.
  *
- * Linear scan of the peer array.  O(n) where n ≤ @ref NETWORK_MAX_PEERS.
+ * Linear scan of the peer array. O(n) where n <= @ref NETWORK_MAX_PEERS.
  *
- * @param id  Network ID to find.
+ * @param id Network ID to find.
  * @return Pointer to the matching @ref node_t, or @c NULL if not found.
  */
 static node_t *find_peer(uint16_t id)
@@ -59,14 +59,13 @@ void network_init(uint16_t own_id)
 
 void network_add_peer(uint16_t id)
 {
-    if (id == net.self.id)           return; /* never add self */
-    if (find_peer(id) != NULL)       return; /* already present */
+    if (find_peer(id) != NULL)      return; /* already present */
     if (net.count >= NETWORK_MAX_PEERS) return; /* list full */
 
     node_t *p = &net.peers[net.count];
     memset(p, 0, sizeof(node_t));
     p->id          = id;
-    p->uncertainty = 1.0f; /* non-zero → scheduler will prioritise this peer */
+    p->uncertainty = 1.0f; /* non-zero -> scheduler will prioritise this peer */
 
     net.count++;
 }
@@ -147,13 +146,20 @@ void network_update_peers_from_sync(uint16_t master_id,
  * Master / self
  * ----------------------------------------------------------------------- */
 
-void network_set_master(uint16_t id)   { net.master_id = id; }
-uint16_t network_get_master(void)      { return net.master_id; }
-bool network_is_master(void)           { return net.master_id == net.self.id; }
-uint16_t network_get_ownid(void)       { return net.self.id; }
-uint8_t network_get_count(void)        { return net.count; }
-void network_set_acknowledged(bool s)  { net.acknowledged = s; }
-bool network_is_acknowledged(void)     { return net.acknowledged; }
+void network_set_master(uint16_t id)
+{
+    net.master_id = id;
+    if (id == net.self.id) {
+        network_remove_peer(net.self.id);  // master never sends PASSIVE — self not needed in list
+    }
+}
+
+uint16_t network_get_master      (void)         { return net.master_id;                        }
+bool     network_is_master       (void)         { return net.master_id == net.self.id;         }
+uint16_t network_get_ownid       (void)         { return net.self.id;                          }
+uint8_t  network_get_count       (void)         { return net.count;                            }
+void     network_set_acknowledged(bool s)       { net.acknowledged = s;                        }
+bool     network_is_acknowledged (void)         { return net.acknowledged;                     }
 
 /* -----------------------------------------------------------------------
  * Position and uncertainty
@@ -182,116 +188,8 @@ uint16_t network_get_highest_uncertainty(void)
 }
 
 /* -----------------------------------------------------------------------
- * Measurements
+ * Peer index lookup
  * ----------------------------------------------------------------------- */
-
-void network_reset_measurements(void)
-{
-    memset(&net.measurements, 0, sizeof(measurements_t));
-}
-
-/* ---- TWR timestamps — initiator ---- */
-
-void network_set_twr_poll_tx(uint64_t ts)               { net.measurements.twr.poll_tx  = ts; }
-void network_set_twr_resp_rx(const uwb_rx_meas_t *meas) { net.measurements.twr.resp_rx  = *meas; }
-void network_set_twr_final_tx(uint64_t ts)              { net.measurements.twr.final_tx = ts; }
-
-/* ---- TWR timestamps — responder ---- */
-
-void network_set_twr_poll_rx(const uwb_rx_meas_t *meas) { net.measurements.twr.poll_rx  = *meas; }
-void network_set_twr_resp_tx(uint64_t ts)               { net.measurements.twr.resp_tx  = ts; }
-void network_set_twr_final_rx(const uwb_rx_meas_t *meas){ net.measurements.twr.final_rx = *meas; }
-
-/* ---- TWR timestamps — read ---- */
-
-const twr_timestamps_t *network_get_twr(void)
-{
-    return &net.measurements.twr;
-}
-
-/* -----------------------------------------------------------------------
- * Passive self-observation — own view of active frames
- * ----------------------------------------------------------------------- */
-
-void network_set_obs_poll_rx(const uwb_rx_meas_t *meas)  { net.measurements.self_twr_observation.poll_rx  = *meas; }
-void network_set_obs_resp_rx(const uwb_rx_meas_t *meas)  { net.measurements.self_twr_observation.resp_rx  = *meas; }
-void network_set_obs_final_rx(const uwb_rx_meas_t *meas) { net.measurements.self_twr_observation.final_rx = *meas; }
-
-const twr_observation_t *network_get_self_twr_observation(void)
-{
-    return &net.measurements.self_twr_observation;
-}
-
-/* -----------------------------------------------------------------------
- * Passive self-observation — inter-passive RX timestamps
- * ----------------------------------------------------------------------- */
-
-bool network_set_passive_report_rx(uint8_t index, const uint64_t meas)
-{
-    if (index >= NETWORK_MAX_PEERS - 2) return false;
-    net.measurements.self_passive_observation.passive_rx[index] = meas;
-    net.measurements.self_passive_count = index + 1;
-    return true;
-}
-
-const passive_observation_t *network_get_self_passive_observation(void)
-{
-    return &net.measurements.self_passive_observation;
-}
-
-uint8_t network_get_self_passive_count(void)
-{
-    return net.measurements.self_passive_count;
-}
-
-/* -----------------------------------------------------------------------
- * Master-collected passive data
- * ----------------------------------------------------------------------- */
-
-bool network_set_passive_ss_rx(uint8_t index, const uwb_rx_meas_t *meas)
-{
-    if (index >= NETWORK_MAX_PEERS - 2) return false;
-    net.measurements.ss_twr[index].passive_rx = *meas;
-    return true;
-}
-
-bool network_set_passive_ss_tx(uint8_t index, uint64_t ts)
-{
-    if (index >= NETWORK_MAX_PEERS - 2) return false;
-    net.measurements.ss_twr[index].passive_tx = ts;
-    return true;
-}
-
-bool network_set_passive_twr_observation(uint8_t index, const twr_observation_simple_t *obs)
-{
-    if (index >= NETWORK_MAX_PEERS - 2) return false;
-    net.measurements.twr_observations[index].poll_rx  = obs->poll_rx;
-    net.measurements.twr_observations[index].resp_rx  = obs->resp_rx;
-    net.measurements.twr_observations[index].final_rx = obs->final_rx;
-    return true;
-}
-
-bool network_set_passive_observation(uint8_t index, const passive_observation_t *obs)
-{
-    if (index >= NETWORK_MAX_PEERS - 2) return false;
-    net.measurements.passive_observations[index] = *obs;
-    return true;
-}
-
-void network_increment_passive_count(void)
-{
-    if (net.measurements.passive_count < NETWORK_MAX_PEERS - 2)
-        net.measurements.passive_count++;
-}
-
-uint8_t network_get_passive_count(void)          { return net.measurements.passive_count; }
-
-bool network_set_passive_device_id(uint8_t index, uint16_t id)
-{
-    if (index >= NETWORK_MAX_PEERS - 2) return false;
-    net.measurements.passive_device_id[index] = id;
-    return true;
-}
 
 int8_t network_get_peer_index(uint16_t id)
 {
@@ -300,45 +198,67 @@ int8_t network_get_peer_index(uint16_t id)
     return -1;
 }
 
-uint16_t network_get_passive_device_id(uint8_t index)
+/* -----------------------------------------------------------------------
+ * Measurements
+ * ----------------------------------------------------------------------- */
+
+void network_reset_measurements(void)
 {
-    if (index >= NETWORK_MAX_PEERS - 2) return 0;
-    return net.measurements.passive_device_id[index];
+    memset(&net.measurements, 0, sizeof(measurements_t));
 }
 
-uint64_t network_get_passive_ss_tx(uint8_t index)
+/* ---- POLL ---- */
+
+void network_store_poll(const msg_poll_t *msg, const uwb_rx_meas_t *rx)
 {
-    if (index >= NETWORK_MAX_PEERS - 2) return 0;
-    return net.measurements.ss_twr[index].passive_tx;
+    net.measurements.poll    = *msg;
+    net.measurements.poll_rx = *rx;
 }
 
-uint64_t network_get_passive_twr_obs_poll_rx(uint8_t index)
+/* ---- RESPONSE TX (responder's own outgoing timestamp) ---- */
+
+void network_store_resp_tx(uint64_t ts)
 {
-    if (index >= NETWORK_MAX_PEERS - 2) return 0;
-    return net.measurements.twr_observations[index].poll_rx;
+    net.measurements.resp_tx = ts;
 }
 
-uint64_t network_get_passive_twr_obs_resp_rx(uint8_t index)
+/* ---- FINAL ---- */
+
+void network_store_final(const msg_final_t *msg, const uwb_rx_meas_t *rx)
 {
-    if (index >= NETWORK_MAX_PEERS - 2) return 0;
-    return net.measurements.twr_observations[index].resp_rx;
+    net.measurements.final    = *msg;
+    net.measurements.final_rx = *rx;
 }
 
-uint64_t network_get_passive_twr_obs_final_rx(uint8_t index)
+/* ---- PASSIVE (one report per call, index = arrival order) ---- */
+
+bool network_store_passive(uint8_t index, const msg_passive_t *msg,
+                           const uwb_rx_meas_t *rx, uint16_t device_id)
 {
-    if (index >= NETWORK_MAX_PEERS - 2) return 0;
-    return net.measurements.twr_observations[index].final_rx;
+    if (index >= NETWORK_MAX_PEERS - 2) return false;
+    net.measurements.passive[index]    = *msg;
+    net.measurements.passive_rx[index] = *rx;
+    net.measurements.passive_count     = index + 1;
+    net.measurements.passive_device_id[index] = device_id;
+    return true;
 }
 
-uwb_rx_meas_t network_get_passive_ss_rx(uint8_t index)
+
+/* ---- Read ---- */
+
+const measurements_t *network_get_measurements(void)
 {
-    if (index >= NETWORK_MAX_PEERS - 2) return (uwb_rx_meas_t){0};
-    return net.measurements.ss_twr[index].passive_rx;
+    return &net.measurements;
+}
+
+uint8_t network_get_passive_count(void)
+{
+    return net.measurements.passive_count;
 }
 
 /* -----------------------------------------------------------------------
  * Sequence number
  * ----------------------------------------------------------------------- */
 
-void network_set_expected_seq_num(uint8_t seq_num) { net.expected_seq_num = seq_num; }
-uint8_t network_get_expected_seq_num(void)         { return net.expected_seq_num; }
+void    network_set_expected_seq_num(uint8_t seq_num) { net.expected_seq_num = seq_num; }
+uint8_t network_get_expected_seq_num(void)            { return net.expected_seq_num;    }

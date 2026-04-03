@@ -15,8 +15,11 @@
 #pragma once
 
 #include <stdint.h>
-#include "uwb_network.h"
+//#include "uwb_network.h"
 #include "DWM3000_driver.h"
+
+/** @brief Maximum number of peers (including self) the network can track. */
+#define NETWORK_MAX_PEERS 7
 
 #ifdef __cplusplus
 extern "C" {
@@ -125,11 +128,9 @@ typedef struct {
  * @note Fields below the "Not in message" marker are not on the wire.
  */
 typedef struct {
+
     uint8_t  seq_num;       /**< Sequence number. */
-    /* -- Not in message: populated from RX frame metadata -- */
-    int16_t  poll_rssi_q8;  /**< RSSI of the received POLL (Q8 fixed-point, dBm × 256). */
-    int16_t  poll_fp_q8;    /**< First-path power of the received POLL (Q8 fixed-point). */
-    uint64_t poll_ts;       /**< RX timestamp of the POLL at the receiver (40-bit). */
+
 } msg_poll_t;
 
 /**
@@ -143,36 +144,31 @@ typedef struct {
  * @note Fields below the "Not in message" marker are not on the wire.
  */
 typedef struct {
+
     uint8_t  seq_num;           /**< Sequence number. */
-    /* -- Not in message: populated from RX frame metadata -- */
-    int16_t  response_rssi_q8;  /**< RSSI of the received RESPONSE (Q8 fixed-point). */
-    int16_t  response_fp_q8;    /**< First-path power of the received RESPONSE (Q8 fixed-point). */
-    uint64_t response_ts;       /**< RX timestamp of the RESPONSE at the receiver (40-bit). */
+
 } msg_response_t;
 
-/**
- * @brief Payload for @c MSG_TYPE_FINAL.
- *
- * Sent by the initiator to close the DS-TWR exchange.
- * Carries all three initiator timestamps and the RESPONSE signal quality
- * so the responder has a complete picture of link quality across all frames:
- * - POLL quality: stored by the responder when POLL arrived.
- * - RESPONSE quality: decoded from this message's wire payload.
- * - FINAL quality: read from the current frame's RX metadata.
- *
- * @note Fields below the "Not in message" marker are not on the wire.
- */
+
 typedef struct {
     uint8_t  seq_num;           /**< Sequence number. */
     uint64_t poll_tx_ts;        /**< Actual TX timestamp of the POLL (40-bit, little-endian). */
     uint64_t resp_rx_ts;        /**< Initiator's RX timestamp of the RESPONSE (40-bit). */
     uint64_t final_tx_ts;       /**< Predicted TX timestamp of this FINAL (40-bit). */
     int16_t  resp_rssi_q8;      /**< RSSI measured by initiator on RESPONSE reception (Q8). */
-    int16_t  resp_fp_q8;        /**< First-path power at initiator on RESPONSE reception (Q8). */
-    /* -- Not in message: populated from RX frame metadata -- */
-    int16_t  final_rssi_q8;     /**< RSSI of the received FINAL at the responder (Q8). */
-    int16_t  final_fp_q8;       /**< First-path power of the received FINAL at the responder (Q8). */
-    uint64_t final_ts;          /**< RX timestamp of the FINAL at the responder (40-bit). */
+
+    /* --- Preceding PASSIVE TX timestamps, in peer-list order --- */
+    uint8_t  entry_count;                       /**< Number of valid entries in @c entries. */
+    uint64_t entries[NETWORK_MAX_PEERS - 2];    /**< TX timestamps of preceding PASSIVE frames.
+                                                 *   The TWR pair (initiator + responder) never
+                                                 *   send passive frames, hence the -2. */
+    int16_t entry_rssi_q8[NETWORK_MAX_PEERS - 2];
+    uint16_t entry_id[NETWORK_MAX_PEERS - 2];
+
+    float IMU_pitch_rad;
+    float IMU_vel_horiz;
+    float IMU_vel_vert;
+
 } msg_final_t;
 
 /**
@@ -189,27 +185,16 @@ typedef struct {
     uint32_t sleep_time;    /**< Planned sleep duration in ms before the next cycle. */
 } msg_share_t;
 
-/**
- * @brief Payload for @c MSG_TYPE_PASSIVE.
- *
- * Broadcast by a passive observer after the FINAL frame is received.
- * Carries this node's own RX timestamps of all three active TWR frames
- * plus the TX timestamps of any preceding passive reports it received
- * before its own turn to transmit.
- *
- * Wire fields are @c seq_num, @c poll_rx_ts, @c resp_rx_ts,
- * @c final_rx_ts, @c passive_tx_ts, @c entry_count, and @c entries.
- *
- * @note Fields below the "Not in message" marker are not on the wire —
- * they are populated from the DWM3000 frame metadata on the receiver side.
- */
+
 typedef struct {
     uint8_t  seq_num;       /**< Sequence number matching the TWR exchange observed. */
 
     /* --- Passive observations of the active TWR frames --- */
     uint64_t poll_rx_ts;    /**< RX timestamp of POLL at this passive node (40-bit). */
+    int16_t  poll_rssi_q8;   /**< RSSI of the received POLL at this node (Q8). */
+
     uint64_t resp_rx_ts;    /**< RX timestamp of RESPONSE at this passive node (40-bit). */
-    uint64_t final_rx_ts;   /**< RX timestamp of FINAL at this passive node (40-bit). */
+    int16_t  resp_rssi_q8;   /**< RSSI of the received RESPONSE at this node (Q8). */
 
     /* --- This node's own PASSIVE transmission --- */
     uint64_t passive_tx_ts; /**< Predicted TX timestamp of this PASSIVE frame (40-bit). */
@@ -219,11 +204,13 @@ typedef struct {
     uint64_t entries[NETWORK_MAX_PEERS - 2];    /**< TX timestamps of preceding PASSIVE frames.
                                                  *   The TWR pair (initiator + responder) never
                                                  *   send passive frames, hence the -2. */
+    int16_t entry_rssi_q8[NETWORK_MAX_PEERS - 2]; /**< RSSI of the received PASSIVE frames at this node (Q8). */
+    uint16_t entry_ids[NETWORK_MAX_PEERS - 2];    /**< Network IDs of the preceding PASSIVE frames, in the same order as @c entries. */
 
-    /* -- Not in message: populated from RX frame metadata -- */
-    int16_t poll_rssi_q8;   /**< RSSI of the received POLL at this node (Q8). */
-    int16_t resp_rssi_q8;   /**< RSSI of the received RESPONSE at this node (Q8). */
-    int16_t final_rssi_q8;  /**< RSSI of the received FINAL at this node (Q8). */
+    float IMU_pitch_rad;
+    float IMU_vel_horiz;
+    float IMU_vel_vert;
+
 } msg_passive_t;
 
 /* ── Unified decoded message container ─────────────────────────────────── */

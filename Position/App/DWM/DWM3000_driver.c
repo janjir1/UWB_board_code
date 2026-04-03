@@ -385,25 +385,25 @@ void dwm_rx_flush(void)
 }
 
 //TODO implement preamble seeking
-void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms, bool keep_listening)
+void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms, bool keep_listening, bool first_call)
 {
-
-    dwt_forcetrxoff();
-    dwt_setrxtimeout(timeout_ms * 1000U);
-    dwt_setpreambledetecttimeout(0);
-    dwt_rxenable(DWT_START_RX_IMMEDIATE);
+    if (first_call) {
+        dwt_forcetrxoff();
+        dwt_setrxtimeout(timeout_ms * 1000U);
+        dwt_setpreambledetecttimeout(0);
+        dwt_rxenable(DWT_START_RX_IMMEDIATE);
+    }
 
     dwm_rx_raw_frame_t frame;
     xQueueReceive(rx_queue, &frame, portMAX_DELAY);
 
-    if (keep_listening && frame.type == DWM_RX_OK) {                        // re-arm before processing
+    if (keep_listening && frame.type == DWM_RX_OK) {
+        /* Re-arm with the updated remaining time passed by the caller */
         dwt_setrxtimeout(timeout_ms * 1000U);
         dwt_rxenable(DWT_START_RX_IMMEDIATE);
-    }
-    else{
+    } else {
         dwt_forcetrxoff();
     }
-    
 
     result->type   = frame.type;
     result->status = frame.status;
@@ -416,10 +416,10 @@ void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms, bool keep_listening)
     memcpy(result->data, frame.data, frame.len);
 
     if (dwt_calculate_rssi(&frame.rx_diag, DWT_ACC_IDX_IP_M, &result->rssi_q8) != DWT_SUCCESS)
-        mprintf("RSSI calc failed\r\n");
+        mprintf("ERROR: RSSI calc failed\r\n");
 
     if (dwt_calculate_first_path_power(&frame.rx_diag, DWT_ACC_IDX_IP_M, &result->fp_q8) != DWT_SUCCESS)
-        mprintf("FP power calc failed\r\n");
+        mprintf("ERROR: FP power calc failed\r\n");
 }
 
 // ─── TX ───────────────────────────────────────────────────────────────────────
@@ -670,7 +670,7 @@ void dwm_rx_continuous_sleep(void)
         osDelay(800);
 
         dwm_wakeup();
-        dwm_rx(&result, 40, false);
+        dwm_rx(&result, 40, false, false);
         dwm_sleep();
 
         switch (result.type) {

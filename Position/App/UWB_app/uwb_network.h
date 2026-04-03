@@ -10,13 +10,12 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include "messages.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/** @brief Maximum number of peers (excluding self) the network can track. */
-#define NETWORK_MAX_PEERS 7
 
 /* -----------------------------------------------------------------------
  * Positioning and ranging types
@@ -32,138 +31,29 @@ extern "C" {
 typedef struct {
     uint64_t ts;        /**< UWB hardware timestamp (~15 ps resolution). */
     int16_t  rssi_q8;   /**< Total received power, Q8 fixed-point (dBm × 256). */
-    int16_t  fp_q8;     /**< First-path power, Q8 fixed-point (dBm × 256). */
 } uwb_rx_meas_t;
 
-/**
- * @brief Timestamps captured during an active DS-TWR exchange.
- *
- * Role determines which fields are populated:
- *
- * | Role       | Valid fields                  |
- * |------------|-------------------------------|
- * | Initiator  | poll_tx, resp_rx, final_tx    |
- * | Responder  | poll_rx, resp_tx, final_rx    |
- *
- * Unused fields are zero-initialised and must not be read.
- */
-typedef struct {
-    uint64_t      poll_tx;  /**< Initiator: time POLL was transmitted. */
-    uwb_rx_meas_t poll_rx;  /**< Responder: POLL reception measurement. */
-
-    uint64_t      resp_tx;  /**< Responder: time RESPONSE was transmitted. */
-    uwb_rx_meas_t resp_rx;  /**< Initiator: RESPONSE reception measurement. */
-
-    uint64_t      final_tx; /**< Initiator: scheduled FINAL TX time (predicted). */
-    uwb_rx_meas_t final_rx; /**< Responder: FINAL reception measurement. */
-} twr_timestamps_t;
-
-/**
- * @brief One passive node's observation of the three active DS-TWR frames,
- *        with full signal quality metrics.
- *
- * Captured by listening to POLL, RESPONSE, and FINAL without transmitting.
- * All three fields are always populated by a passive observer.
- *
- * @see twr_observation_simple_t for a timestamp-only variant.
- */
-typedef struct {
-    uwb_rx_meas_t poll_rx;  /**< Reception measurement of the POLL frame. */
-    uwb_rx_meas_t resp_rx;  /**< Reception measurement of the RESPONSE frame. */
-    uwb_rx_meas_t final_rx; /**< Reception measurement of the FINAL frame. */
-} twr_observation_t;
-
-/**
- * @brief One passive node's observation of the three active DS-TWR frames,
- *        timestamps only (no signal quality metrics).
- *
- * Used when a passive node encodes its observations into its own PASSIVE
- * report frame, where space is limited. All three fields are always populated.
- *
- * @see twr_observation_t for the full-metrics variant.
- */
-typedef struct {
-    uint64_t poll_rx;   /**< RX timestamp of the POLL frame. */
-    uint64_t resp_rx;   /**< RX timestamp of the RESPONSE frame. */
-    uint64_t final_rx;  /**< RX timestamp of the FINAL frame. */
-} twr_observation_simple_t;
-
-/**
- * @brief One passive node's reception records of other passive report frames.
- *
- * After FINAL, each passive node broadcasts its own MSG_TYPE_PASSIVE frame
- * in ascending order.  Passive node K therefore receives reports from nodes
- * 1 … K−1 before it transmits:
- *
- * @code
- * POLL → RESPONSE → FINAL → PASSIVE_1 → PASSIVE_2 → … → PASSIVE_N
- * @endcode
- *
- * @c passive_rx[i] holds the RX timestamp of the i-th passive report received.
- * Entries beyond what the node received before its own TX are zero.
- * The TWR pair (initiator + responder) never send passive frames, hence -2.
- */
-typedef struct {
-    uint64_t passive_rx[NETWORK_MAX_PEERS - 2]; /**< RX timestamps of preceding passive reports. */
-} passive_observation_t;
-
-/**
- * @brief Single-sided TWR data pair for one passive node.
- *
- * Stores the passive node's own TX timestamp (embedded in its PASSIVE
- * frame) alongside the master's RX measurement of that same frame.
- * Together these form a single-sided TWR pair that the master can use
- * to estimate range to the passive node.
- */
-typedef struct {
-    uint64_t      passive_tx; /**< TX timestamp reported by the passive node. */
-    uwb_rx_meas_t passive_rx; /**< Master's RX measurement of the passive node's frame. */
-} ss_twr_t;
 
 /* -----------------------------------------------------------------------
  * Exchange measurement block
  * ----------------------------------------------------------------------- */
 
-/**
- * @brief All measurements captured for the current DS-TWR exchange.
- *
- * Lives flat under @ref network_t — only one exchange is active at a time.
- * Reset with @c memset at the start of each new exchange via
- * @ref network_reset_measurements.
- *
- * Each device fills a different subset depending on its role:
- *
- * | Role        | Fields written                                          |
- * |-------------|---------------------------------------------------------|
- * | Initiator   | twr (poll_tx, resp_rx, final_tx)                        |
- * | Responder   | twr (poll_rx, resp_tx, final_rx)                        |
- * | Passive     | self_twr_observation, self_passive_observation           |
- *
- * The master (initiator) additionally collects passive node reports:
- * - @c twr_observations[i]      — passive node i's view of POLL/RESPONSE/FINAL
- * - @c passive_observations[i]  — passive node i's view of earlier passive frames
- *
- * Valid index range: 0 … @c passive_count - 1.
- */
 typedef struct {
+    //place to store decoded messeches of this exchange, for master only    
+    msg_poll_t poll;
+    uwb_rx_meas_t poll_rx;
 
-    /* ---- Active role (initiator or responder) ---- */
-    twr_timestamps_t twr;               /**< Active-role POLL/RESPONSE/FINAL timestamps. */
+    msg_response_t resp;
+    uint64_t   resp_tx;
 
-    /* ---- Passive role (this device only) ---- */
-    twr_observation_t    self_twr_observation;      /**< Own view of POLL, RESPONSE, FINAL. */
-    passive_observation_t self_passive_observation; /**< Own view of other passive reports
-                                                     *   received before self transmitted. */
-    uint8_t self_passive_count;                     /**< Number of valid entries in
-                                                     *   self_passive_observation.passive_rx[]. */
+    msg_final_t  final;
+    uwb_rx_meas_t final_rx;
 
-    /* ---- Master-collected passive data ---- */
-    uint16_t              passive_device_id[NETWORK_MAX_PEERS - 2];   /**< Network IDs of passive nodes, in arrival order. */
-    ss_twr_t              ss_twr[NETWORK_MAX_PEERS - 2];              /**< SS-TWR pair for each passive node. */
-    twr_observation_simple_t twr_observations[NETWORK_MAX_PEERS - 2]; /**< Each passive node's timestamp-only POLL/RESP/FINAL view. */
-    passive_observation_t passive_observations[NETWORK_MAX_PEERS - 2];/**< Each passive node's inter-passive RX timestamps. */
-    uint8_t passive_count; /**< Number of passive reports received this round.
-                            *   Valid indices: 0 … passive_count - 1. */
+    uint8_t passive_count;
+    msg_passive_t passive[NETWORK_MAX_PEERS - 2];
+    uwb_rx_meas_t passive_rx[NETWORK_MAX_PEERS - 2];
+    uint16_t passive_device_id[NETWORK_MAX_PEERS - 2];
+
 } measurements_t;
 
 /* -----------------------------------------------------------------------
@@ -384,196 +274,18 @@ uint16_t network_get_highest_uncertainty(void);
  * Network API — measurements
  * ----------------------------------------------------------------------- */
 
-/**
- * @brief Reset all measurements for the current exchange.
- *
- * Must be called at the start of each new DS-TWR round before
- * any timestamp setters are called.
- */
-void network_reset_measurements(void);
-
-/**
- * @defgroup twr_initiator TWR timestamps — initiator writes
- * @{
- */
-/** @brief Store the POLL TX timestamp (initiator). @param ts DW3xxx 40-bit TX timestamp. */
-void network_set_twr_poll_tx(uint64_t ts);
-/** @brief Store the RESPONSE RX measurement (initiator). @param meas Pointer to the RX measurement. */
-void network_set_twr_resp_rx(const uwb_rx_meas_t *meas);
-/** @brief Store the FINAL TX timestamp (initiator). @param ts DW3xxx 40-bit TX timestamp. */
-void network_set_twr_final_tx(uint64_t ts);
-/** @} */
-
-/**
- * @defgroup twr_responder TWR timestamps — responder writes
- * @{
- */
-/** @brief Store the POLL RX measurement (responder). @param meas Pointer to the RX measurement. */
-void network_set_twr_poll_rx(const uwb_rx_meas_t *meas);
-/** @brief Store the RESPONSE TX timestamp (responder). @param ts DW3xxx 40-bit TX timestamp. */
-void network_set_twr_resp_tx(uint64_t ts);
-/** @brief Store the FINAL RX measurement (responder). @param meas Pointer to the RX measurement. */
-void network_set_twr_final_rx(const uwb_rx_meas_t *meas);
-/** @} */
-
-/**
- * @brief Get a read-only pointer to the active DS-TWR timestamp set.
- *
- * @return Pointer to @c measurements_t.twr; valid until the next
- *         @ref network_reset_measurements call.
- */
-const twr_timestamps_t *network_get_twr(void);
-
-/**
- * @defgroup obs_passive Passive self-observation — own view of active frames
- * @{
- */
-/** @brief Store passive node's own RX measurement of POLL.     @param meas Pointer to the RX measurement. */
-void network_set_obs_poll_rx(const uwb_rx_meas_t *meas);
-/** @brief Store passive node's own RX measurement of RESPONSE. @param meas Pointer to the RX measurement. */
-void network_set_obs_resp_rx(const uwb_rx_meas_t *meas);
-/** @brief Store passive node's own RX measurement of FINAL.    @param meas Pointer to the RX measurement. */
-void network_set_obs_final_rx(const uwb_rx_meas_t *meas);
-/**
- * @brief Get a read-only pointer to this device's own TWR observation.
- * @return Pointer to @c measurements_t.self_twr_observation.
- */
-const twr_observation_t *network_get_self_twr_observation(void);
-/** @} */
-
-/**
- * @defgroup obs_passive_chain Passive self-observation — inter-passive RX timestamps
- * @{
- */
-/**
- * @brief Record the RX timestamp of one incoming passive report frame.
- *
- * Call once per received MSG_TYPE_PASSIVE before this device transmits
- * its own passive report.  Index equals arrival order (0-based).
- *
- * @param index  Arrival index (0-based).
- * @param meas   DW3xxx 40-bit RX timestamp.
- * @return @c false if @p index is out of bounds.
- */
-bool network_set_passive_report_rx(uint8_t index, const uint64_t meas);
-/**
- * @brief Get a read-only pointer to this device's inter-passive observation.
- * @return Pointer to @c measurements_t.self_passive_observation.
- */
-const passive_observation_t *network_get_self_passive_observation(void);
-/** @brief Get the number of passive reports received before own TX. @return Entry count. */
-uint8_t network_get_self_passive_count(void);
-/** @} */
-
-/**
- * @defgroup master_passive Master-collected passive data
- * @{
- */
-/**
- * @brief Store the master's RX measurement of one passive node's PASSIVE frame.
- *
- * @param index  Passive node index (0-based, order of arrival).
- * @param meas   Master's RX measurement of that PASSIVE frame.
- * @return @c false if @p index is out of bounds.
- */
-bool network_set_passive_ss_rx(uint8_t index, const uwb_rx_meas_t *meas);
-
-/**
- * @brief Store the TX timestamp embedded in one passive node's PASSIVE frame.
- *
- * @param index  Passive node index (0-based).
- * @param ts     TX timestamp as reported by the passive node.
- * @return @c false if @p index is out of bounds.
- */
-bool network_set_passive_ss_tx(uint8_t index, uint64_t ts);
-
-/**
- * @brief Store one passive node's POLL/RESPONSE/FINAL observation (timestamps only).
- *
- * @param index  Passive node index (0-based).
- * @param obs    Decoded POLL/RESP/FINAL observation from the PASSIVE frame.
- * @return @c false if @p index is out of bounds.
- */
-bool network_set_passive_twr_observation(uint8_t index, const twr_observation_simple_t *obs);
-
-/**
- * @brief Store one passive node's inter-passive RX observation.
- *
- * @param index  Passive node index (0-based).
- * @param obs    Decoded inter-passive timestamps from the PASSIVE frame.
- * @return @c false if @p index is out of bounds.
- */
-bool network_set_passive_observation(uint8_t index, const passive_observation_t *obs);
-
-/**
- * @brief Increment the master's passive report counter.
- *
- * Call once per fully decoded PASSIVE frame, after all four setters above.
- * No-op if the counter would exceed @c NETWORK_MAX_PEERS - 2.
- */
-void network_increment_passive_count(void);
-
-/** @brief Get the number of passive reports collected by the master. @return Report count. */
-uint8_t network_get_passive_count(void);
-
-/**
- * @brief Store the network ID of one passive node.
- *
- * @param index  Passive node index (0-based).
- * @param id     Network ID decoded from the PASSIVE frame header.
- * @return @c false if @p index is out of bounds.
- */
-bool network_set_passive_device_id(uint8_t index, uint16_t id);
-
-/**
- * @brief Get the network ID of one passive node by index.
- *
- * @param index  Passive node index (0-based).
- * @return Network ID, or 0 if @p index is out of bounds.
- */
-uint16_t network_get_passive_device_id(uint8_t index);
-
-/**
- * @brief Get the TX timestamp reported by one passive node.
- *
- * @param index  Passive node index (0-based).
- * @return DW3xxx 40-bit TX timestamp, or 0 if @p index is out of bounds.
- */
-uint64_t network_get_passive_ss_tx(uint8_t index);
-
-/**
- * @brief Get one passive node's RX timestamp of POLL.
- * @param index  Passive node index (0-based).
- * @return Timestamp, or 0 if out of bounds.
- */
-uint64_t network_get_passive_twr_obs_poll_rx(uint8_t index);
-
-/**
- * @brief Get one passive node's RX timestamp of RESPONSE.
- * @param index  Passive node index (0-based).
- * @return Timestamp, or 0 if out of bounds.
- */
-uint64_t network_get_passive_twr_obs_resp_rx(uint8_t index);
-
-/**
- * @brief Get one passive node's RX timestamp of FINAL.
- * @param index  Passive node index (0-based).
- * @return Timestamp, or 0 if out of bounds.
- */
-uint64_t network_get_passive_twr_obs_final_rx(uint8_t index);
-
-/**
- * @brief Get the master's RX measurement of one passive node's PASSIVE frame.
- *
- * @param index  Passive node index (0-based).
- * @return @ref uwb_rx_meas_t with all fields zero if @p index is out of bounds.
- */
-uwb_rx_meas_t network_get_passive_ss_rx(uint8_t index);
-/** @} */
 
 /* -----------------------------------------------------------------------
  * Network API — sequence number
  * ----------------------------------------------------------------------- */
+
+void                  network_reset_measurements(void);
+void                  network_store_poll(const msg_poll_t *msg, const uwb_rx_meas_t *rx);
+void                  network_store_resp_tx(uint64_t ts);
+void                  network_store_final(const msg_final_t *msg, const uwb_rx_meas_t *rx);
+bool network_store_passive(uint8_t index, const msg_passive_t *msg,
+                           const uwb_rx_meas_t *rx, uint16_t device_id);
+uint8_t               network_get_passive_count(void);
 
 /**
  * @brief Set the expected sequence number for the next incoming frame.

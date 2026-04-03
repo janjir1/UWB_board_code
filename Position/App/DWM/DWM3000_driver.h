@@ -66,7 +66,7 @@ void cb_rx_to(const dwt_cb_data_t *cb_data);
 void cb_tx_done(const dwt_cb_data_t *cb_data);
 void cb_spi_rdy(const dwt_cb_data_t *cb_data);
 
-void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms, bool keep_listening);
+void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms, bool keep_listening, bool first_call);
 void dwm_rx_flush(void);
 
 dwm_tx_event_type_t dwm_tx(dwm_tx_frame_t *frame);

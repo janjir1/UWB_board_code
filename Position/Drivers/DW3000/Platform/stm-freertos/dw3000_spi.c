@@ -49,7 +49,7 @@ extern SPI_HandleTypeDef        DW3000_SPI_HANDLE;
 
 /* SPI baud rate prescaler — see table above */
 #define DW3000_SPI_PRESCALER_SLOW   SPI_BAUDRATEPRESCALER_32
-#define DW3000_SPI_PRESCALER_FAST   SPI_BAUDRATEPRESCALER_4
+#define DW3000_SPI_PRESCALER_FAST   SPI_BAUDRATEPRESCALER_2
 
 /* HAL transfer timeout in ms — increase if you see HAL_TIMEOUT errors */
 #define DW3000_SPI_TIMEOUT_MS       100U

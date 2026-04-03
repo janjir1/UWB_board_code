@@ -149,10 +149,7 @@ static void msg_decode_sync(const dwm_rx_frame_t *frame, msg_sync_t *out)
 static void msg_decode_poll(const dwm_rx_frame_t *frame, msg_poll_t *out)
 {
     out->seq_num     = frame->data[MSG_PAYLOAD_OFFSET_SEQ];
-    /* -- Not in message: populated from RX frame metadata -- */
-    out->poll_rssi_q8 = frame->rssi_q8;
-    out->poll_fp_q8   = frame->fp_q8;
-    out->poll_ts      = frame->rx_timestamp;
+
 }
 
 /**
@@ -168,34 +165,34 @@ static void msg_decode_response(const dwm_rx_frame_t *frame, msg_response_t *out
 {
     out->seq_num          = frame->data[MSG_PAYLOAD_OFFSET_SEQ];
     /* -- Not in message: populated from RX frame metadata -- */
-    out->response_rssi_q8 = frame->rssi_q8;
-    out->response_fp_q8   = frame->fp_q8;
-    out->response_ts      = frame->rx_timestamp;
+
 }
 
-/**
- * @brief Decode a FINAL message payload.
- *
- * Extracts all three initiator timestamps and the RESPONSE signal quality
- * values the initiator measured.  FINAL reception quality is read from
- * the current frame's metadata.
- *
- * @param[in]  frame  Raw RX frame.
- * @param[out] out    Decoded final struct to populate.
- */
+
 static void msg_decode_final(const dwm_rx_frame_t *frame, msg_final_t *out)
 {
-    out->seq_num     = frame->data[MSG_PAYLOAD_OFFSET_SEQ];
-    out->poll_tx_ts  = ts_buf_to_u64(&frame->data[MSG_PAYLOAD_OFFSET_TS_0]);
-    out->resp_rx_ts  = ts_buf_to_u64(&frame->data[MSG_PAYLOAD_OFFSET_TS_1]);
-    out->final_tx_ts = ts_buf_to_u64(&frame->data[MSG_PAYLOAD_OFFSET_TS_2]);
-    /* -- Sent by initiator: RESPONSE quality as seen by initiator -- */
-    memcpy(&out->resp_rssi_q8, &frame->data[MSG_PAYLOAD_OFFSET_RESP_RSSI], sizeof(int16_t));
-    memcpy(&out->resp_fp_q8,   &frame->data[MSG_PAYLOAD_OFFSET_RESP_FP],   sizeof(int16_t));
-    /* -- Not in message: FINAL quality as seen by responder -- */
-    out->final_rssi_q8 = frame->rssi_q8;
-    out->final_fp_q8   = frame->fp_q8;
-    out->final_ts      = frame->rx_timestamp;
+    const uint8_t *p = &frame->data[MSG_PAYLOAD_OFFSET_SEQ];
+
+    memset(out, 0, sizeof(*out));
+
+    out->seq_num = *p++;
+
+    memcpy(&out->poll_tx_ts,   p, MSG_TS_LEN);      p += MSG_TS_LEN;
+    memcpy(&out->resp_rx_ts,   p, MSG_TS_LEN);      p += MSG_TS_LEN;
+    memcpy(&out->final_tx_ts,  p, MSG_TS_LEN);      p += MSG_TS_LEN;
+
+    memcpy(&out->resp_rssi_q8, p, sizeof(int16_t)); p += sizeof(int16_t);
+
+    out->entry_count = *p++;
+    for (int i = 0; i < out->entry_count && i < (NETWORK_MAX_PEERS - 2); i++) {
+        memcpy(&out->entries[i],      p, MSG_TS_LEN);        p += MSG_TS_LEN;
+        memcpy(&out->entry_rssi_q8[i], p, sizeof(int16_t)); p += sizeof(int16_t);
+        memcpy(&out->entry_id[i],      p, sizeof(uint16_t)); p += sizeof(uint16_t); // ← new
+    }
+
+    memcpy(&out->IMU_pitch_rad, p, sizeof(float)); p += sizeof(float);
+    memcpy(&out->IMU_vel_horiz, p, sizeof(float)); p += sizeof(float);
+    memcpy(&out->IMU_vel_vert,  p, sizeof(float)); p += sizeof(float);
 }
 
 /**
@@ -215,36 +212,35 @@ static void msg_decode_share(const dwm_rx_frame_t *frame, msg_share_t *out)
            sizeof(uint32_t));
 }
 
-/**
- * @brief Decode a PASSIVE message payload.
- *
- * Reads four 5-byte timestamps (POLL/RESP/FINAL RX and own TX), then
- * the variable-length array of preceding passive TX timestamps.
- * Upper bytes of all @c uint64_t fields are zeroed before copying so
- * there is no garbage from unwritten high bytes.
- *
- * @param[in]  frame  Raw RX frame.
- * @param[out] out    Decoded passive struct to populate.
- */
+
 static void msg_decode_passive(const dwm_rx_frame_t *frame, msg_passive_t *out)
 {
     const uint8_t *p = &frame->data[MSG_PAYLOAD_OFFSET_SEQ];
 
-    memset(out, 0, sizeof(*out)); /* zero upper bytes of all uint64_t fields */
+    memset(out, 0, sizeof(*out));
 
     out->seq_num = *p++;
 
-    memcpy(&out->poll_rx_ts,    p, MSG_TS_LEN); p += MSG_TS_LEN;
-    memcpy(&out->resp_rx_ts,    p, MSG_TS_LEN); p += MSG_TS_LEN;
-    memcpy(&out->final_rx_ts,   p, MSG_TS_LEN); p += MSG_TS_LEN;
+    memcpy(&out->poll_rx_ts,   p, MSG_TS_LEN);       p += MSG_TS_LEN;
+    memcpy(&out->poll_rssi_q8, p, sizeof(int16_t));  p += sizeof(int16_t);
+
+    memcpy(&out->resp_rx_ts,   p, MSG_TS_LEN);       p += MSG_TS_LEN;
+    memcpy(&out->resp_rssi_q8, p, sizeof(int16_t));  p += sizeof(int16_t);
+
+    /* final_rx_ts removed — PASSIVE now transmits before FINAL */
+
     memcpy(&out->passive_tx_ts, p, MSG_TS_LEN); p += MSG_TS_LEN;
 
     out->entry_count = *p++;
-
     for (int i = 0; i < out->entry_count && i < (NETWORK_MAX_PEERS - 2); i++) {
-        memcpy(&out->entries[i], p, MSG_TS_LEN);
-        p += MSG_TS_LEN;
+        memcpy(&out->entries[i],       p, MSG_TS_LEN);       p += MSG_TS_LEN;
+        memcpy(&out->entry_rssi_q8[i], p, sizeof(int16_t)); p += sizeof(int16_t);
+        memcpy(&out->entry_ids[i],     p, sizeof(uint16_t)); p += sizeof(uint16_t);
     }
+
+    memcpy(&out->IMU_pitch_rad, p, sizeof(float)); p += sizeof(float);
+    memcpy(&out->IMU_vel_horiz, p, sizeof(float)); p += sizeof(float);
+    memcpy(&out->IMU_vel_vert,  p, sizeof(float)); p += sizeof(float);
 }
 
 /* ── Private encoders ───────────────────────────────────────────────────── */
@@ -319,36 +315,31 @@ static uint16_t msg_encode_response(const msg_response_t *in, uint8_t *buf)
     return MSG_PAYLOAD_OFFSET_SEQ + 1;
 }
 
-/**
- * @brief Encode a FINAL message payload into the wire buffer.
- *
- * Wire layout:
- * @code
- * [SEQ]       1 byte
- * [TS_0]      5 bytes  poll_tx_ts    — actual POLL TX time
- * [TS_1]      5 bytes  resp_rx_ts    — initiator RX time of RESPONSE
- * [TS_2]      5 bytes  final_tx_ts   — predicted FINAL TX time
- * [RESP_RSSI] 2 bytes  resp_rssi_q8  — RSSI at initiator on RESPONSE (Q8)
- * [RESP_FP]   2 bytes  resp_fp_q8    — first-path at initiator on RESPONSE (Q8)
- * @endcode
- *
- * @note @c final_rssi_q8 and @c final_fp_q8 are not transmitted —
- *       they are measured locally by the responder when FINAL arrives.
- *
- * @param[in]  in   Populated final struct.
- * @param[out] buf  Output buffer (at least MSG_PAYLOAD_OFFSET_RESP_FP +
- *                  sizeof(int16_t) bytes).
- * @return Total bytes written.
- */
+
 static uint16_t msg_encode_final(const msg_final_t *in, uint8_t *buf)
 {
-    buf[MSG_PAYLOAD_OFFSET_SEQ] = in->seq_num;
-    u64_to_ts_buf(in->poll_tx_ts,  &buf[MSG_PAYLOAD_OFFSET_TS_0]);
-    u64_to_ts_buf(in->resp_rx_ts,  &buf[MSG_PAYLOAD_OFFSET_TS_1]);
-    u64_to_ts_buf(in->final_tx_ts, &buf[MSG_PAYLOAD_OFFSET_TS_2]);
-    memcpy(&buf[MSG_PAYLOAD_OFFSET_RESP_RSSI], &in->resp_rssi_q8, sizeof(int16_t));
-    memcpy(&buf[MSG_PAYLOAD_OFFSET_RESP_FP],   &in->resp_fp_q8,   sizeof(int16_t));
-    return MSG_PAYLOAD_OFFSET_RESP_FP + sizeof(int16_t);
+    uint8_t *p = &buf[MSG_PAYLOAD_OFFSET_SEQ];
+
+    *p++ = in->seq_num;
+
+    u64_to_ts_buf(in->poll_tx_ts,  p); p += MSG_TS_LEN;
+    u64_to_ts_buf(in->resp_rx_ts,  p); p += MSG_TS_LEN;
+    u64_to_ts_buf(in->final_tx_ts, p); p += MSG_TS_LEN;
+
+    memcpy(p, &in->resp_rssi_q8, sizeof(int16_t)); p += sizeof(int16_t);
+
+    *p++ = in->entry_count;
+    for (int i = 0; i < in->entry_count; i++) {
+        u64_to_ts_buf(in->entries[i], p);                    p += MSG_TS_LEN;
+        memcpy(p, &in->entry_rssi_q8[i], sizeof(int16_t));  p += sizeof(int16_t);
+        memcpy(p, &in->entry_id[i],      sizeof(uint16_t)); p += sizeof(uint16_t); // ← new
+    }
+
+    memcpy(p, &in->IMU_pitch_rad, sizeof(float)); p += sizeof(float);
+    memcpy(p, &in->IMU_vel_horiz, sizeof(float)); p += sizeof(float);
+    memcpy(p, &in->IMU_vel_vert,  sizeof(float)); p += sizeof(float);
+
+    return (uint16_t)(p - buf);
 }
 
 /**
@@ -372,41 +363,32 @@ static uint16_t msg_encode_share(const msg_share_t *in, uint8_t *buf)
     return MSG_PAYLOAD_OFFSET_SHARE_SLEEP + sizeof(uint32_t);
 }
 
-/**
- * @brief Encode a PASSIVE message payload into the wire buffer.
- *
- * Wire layout:
- * @code
- * [SEQ]           1 byte
- * [POLL_RX_TS]    5 bytes (40-bit, little-endian)
- * [RESP_RX_TS]    5 bytes
- * [FINAL_RX_TS]   5 bytes
- * [PASSIVE_TX_TS] 5 bytes
- * [ENTRY_COUNT]   1 byte
- * [ENTRIES]       entry_count × 5 bytes
- * @endcode
- *
- * @param[in]  in   Populated passive struct.
- * @param[out] buf  Output buffer (sized for the full payload).
- * @return Total bytes written.
- */
+
 static uint16_t msg_encode_passive(const msg_passive_t *in, uint8_t *buf)
 {
     uint8_t *p = &buf[MSG_PAYLOAD_OFFSET_SEQ];
 
     *p++ = in->seq_num;
 
-    memcpy(p, &in->poll_rx_ts,    MSG_TS_LEN); p += MSG_TS_LEN;
-    memcpy(p, &in->resp_rx_ts,    MSG_TS_LEN); p += MSG_TS_LEN;
-    memcpy(p, &in->final_rx_ts,   MSG_TS_LEN); p += MSG_TS_LEN;
-    memcpy(p, &in->passive_tx_ts, MSG_TS_LEN); p += MSG_TS_LEN;
+    u64_to_ts_buf(in->poll_rx_ts, p);       p += MSG_TS_LEN;
+    memcpy(p, &in->poll_rssi_q8, sizeof(int16_t));  p += sizeof(int16_t);
+
+    u64_to_ts_buf(in->resp_rx_ts, p);       p += MSG_TS_LEN;
+    memcpy(p, &in->resp_rssi_q8, sizeof(int16_t));  p += sizeof(int16_t);
+
+    /* final_rx_ts removed */
+    u64_to_ts_buf(in->passive_tx_ts, p); p += MSG_TS_LEN;
 
     *p++ = in->entry_count;
-
     for (int i = 0; i < in->entry_count; i++) {
-        memcpy(p, &in->entries[i], MSG_TS_LEN);
-        p += MSG_TS_LEN;
+        u64_to_ts_buf(in->entries[i], p);       p += MSG_TS_LEN;
+        memcpy(p, &in->entry_rssi_q8[i], sizeof(int16_t)); p += sizeof(int16_t);
+        memcpy(p, &in->entry_ids[i],     sizeof(uint16_t));  p += sizeof(uint16_t);
     }
+
+    memcpy(p, &in->IMU_pitch_rad, sizeof(float)); p += sizeof(float);
+    memcpy(p, &in->IMU_vel_horiz, sizeof(float)); p += sizeof(float);
+    memcpy(p, &in->IMU_vel_vert,  sizeof(float)); p += sizeof(float);
 
     return (uint16_t)(p - buf);
 }
@@ -483,10 +465,7 @@ static void test_poll(void)
 
     mprintf("POLL IN:  seq=0x%02X\r\n", tx_msg.data.poll.seq_num);
     mprintf("POLL OUT: seq=0x%02X ts=", rx_msg.data.poll.seq_num);
-    MPRINT_TS("", rx_msg.data.poll.poll_ts);
-    mprintf(" rssi=%d fp=%d\r\n\r\n",
-            rx_msg.data.poll.poll_rssi_q8,
-            rx_msg.data.poll.poll_fp_q8);
+
 }
 
 /**
@@ -507,10 +486,9 @@ static void test_response(void)
     msg_decode(&rx_frame, &rx_msg);
 
     mprintf("RESP IN:  seq=0x%02X\r\n", tx_msg.data.response.seq_num);
-    mprintf("RESP OUT: seq=0x%02X rssi=%d fp=%d\r\n\r\n",
-            rx_msg.data.response.seq_num,
-            rx_msg.data.response.response_rssi_q8,
-            rx_msg.data.response.response_fp_q8);
+    mprintf("RESP OUT: seq=0x%02X\r\n\r\n",
+            rx_msg.data.response.seq_num);
+
 }
 
 /**
@@ -528,7 +506,6 @@ static void test_final(void)
             .resp_rx_ts  = 0x0000002222222222ULL,
             .final_tx_ts = 0x0000003333333333ULL,
             .resp_rssi_q8 = -400,
-            .resp_fp_q8   = -200,
         }
     };
 
@@ -541,17 +518,11 @@ static void test_final(void)
     MPRINT_TS(" poll_tx=",  tx_msg.data.final.poll_tx_ts);  mprintf("\r\n");
     MPRINT_TS(" resp_rx=",  tx_msg.data.final.resp_rx_ts);  mprintf("\r\n");
     MPRINT_TS(" final_tx=", tx_msg.data.final.final_tx_ts); mprintf("\r\n");
-    mprintf(" resp_rssi=%d resp_fp=%d\r\n",
-            tx_msg.data.final.resp_rssi_q8, tx_msg.data.final.resp_fp_q8);
 
     mprintf("FINAL OUT: seq=0x%02X\r\n", rx_msg.data.final.seq_num);
     MPRINT_TS(" poll_tx=",  rx_msg.data.final.poll_tx_ts);  mprintf("\r\n");
     MPRINT_TS(" resp_rx=",  rx_msg.data.final.resp_rx_ts);  mprintf("\r\n");
     MPRINT_TS(" final_tx=", rx_msg.data.final.final_tx_ts); mprintf("\r\n");
-    mprintf(" resp_rssi=%d resp_fp=%d\r\n",
-            rx_msg.data.final.resp_rssi_q8, rx_msg.data.final.resp_fp_q8);
-    mprintf(" final_rssi=%d final_fp=%d\r\n\r\n",
-            rx_msg.data.final.final_rssi_q8, rx_msg.data.final.final_fp_q8);
 }
 
 /**

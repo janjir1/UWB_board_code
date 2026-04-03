@@ -11,7 +11,8 @@
 #include "stm32l4xx_hal.h"
 #include "imu.h"
 
-
+    float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
+    uint32_t ticks_elapsed = 0;
 
 // THE CRITICAL PART: Extern "C" wrapper for the task function
 void StartAcc(void *argument) {
@@ -35,8 +36,6 @@ void StartAcc(void *argument) {
 
     osThreadFlagsSet(RangingHandle, 0x01);
 
-    float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
-    uint32_t ticks_elapsed = 0;
 
     while(1){
         osThreadFlagsWait(0x01, osFlagsWaitAll, osWaitForever);
@@ -46,9 +45,16 @@ void StartAcc(void *argument) {
         imu_integrate(&fifo, &pitch_rad, &speed_horiz, &vel_z, &ticks_elapsed);
         osThreadFlagsSet(RangingHandle, 0x02);
         mprintf("IMU data ready\r\n");
-        imu_print_results(pitch_rad, speed_horiz, vel_z, ticks_elapsed);
+        //imu_print_results(pitch_rad, speed_horiz, vel_z, ticks_elapsed);
     }
     vTaskDelete( NULL );
     while(1) { } 
 }
 
+void imu_get_results(float *out_pitch_rad, float *out_speed_horiz, float *out_vel_z)
+{
+    *out_pitch_rad     = pitch_rad;
+    *out_speed_horiz   = speed_horiz;
+    *out_vel_z        = vel_z;
+
+}
