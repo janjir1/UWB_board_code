@@ -395,10 +395,20 @@ void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms, bool keep_listening, bo
     }
 
     dwm_rx_raw_frame_t frame;
-    xQueueReceive(rx_queue, &frame, portMAX_DELAY);
+
+    // Add 50ms margin over the HW timeout as a hard RTOS-level backstop
+    uint32_t rtos_timeout = pdMS_TO_TICKS(timeout_ms + 50);
+
+    if (xQueueReceive(rx_queue, &frame, rtos_timeout) != pdTRUE) {
+        // HW IRQ never fired — chip is stuck, force it back to idle
+        dwt_forcetrxoff();
+        dwm_rx_flush();
+        result->type   = DWM_RX_TIMEOUT;
+        result->status = 0;
+        return;
+    }
 
     if (keep_listening && frame.type == DWM_RX_OK) {
-        /* Re-arm with the updated remaining time passed by the caller */
         dwt_setrxtimeout(timeout_ms * 1000U);
         dwt_rxenable(DWT_START_RX_IMMEDIATE);
     } else {

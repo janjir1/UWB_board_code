@@ -9,6 +9,8 @@
 
 #define PRINT_QUEUE_DEPTH   32
 #define PRINT_BUF_SIZE      128
+extern USBD_HandleTypeDef hUsbDeviceFS;
+
 
 typedef struct {
     char data[PRINT_BUF_SIZE];
@@ -54,8 +56,10 @@ void mprintf(const char *format, ...)
 /* Low-priority task — blocking here is fine */
 void PrintTask(void *arg)
 {
-    (void)arg;
+    static uint8_t cdc_tx_buf[PRINT_BUF_SIZE];
+
     s_print_queue = osMessageQueueNew(PRINT_QUEUE_DEPTH, sizeof(print_msg_t), NULL);
+    configASSERT(s_print_queue != NULL);
 
     print_msg_t msg;
     for (;;) {
@@ -63,15 +67,26 @@ void PrintTask(void *arg)
             continue;
 
 #if (PRINT_MODE == STlink || PRINT_MODE == Both)
+    // HAL_UART_Transmit blocks 100ms even with nothing connected
+    // Only transmit if UART is ready
+    if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_TXE))
         HAL_UART_Transmit(&huart1, (uint8_t *)msg.data, msg.len, 100);
 #endif
 
 #if (PRINT_MODE == USB_CDC || PRINT_MODE == Both)
-        uint32_t t0 = HAL_GetTick();
-        while (CDC_Transmit_FS((uint8_t *)msg.data, msg.len) == USBD_BUSY) {
-            if (HAL_GetTick() - t0 > 5) break;
-            osDelay(1);   /* yield while waiting for USB host poll */
-        }
+    if (hUsbDeviceFS.dev_state == USBD_STATE_CONFIGURED &&
+        hUsbDeviceFS.pClassData != NULL)                   // ← NULL check
+    {
+        memcpy(cdc_tx_buf, msg.data, msg.len);
+
+        /* Wrap in critical section so USB disconnect can't tear down
+         * endpoints between our state check and the actual transmit */
+        taskENTER_CRITICAL();
+        uint8_t usb_ok = (hUsbDeviceFS.dev_state == USBD_STATE_CONFIGURED &&
+                          hUsbDeviceFS.pClassData != NULL);
+        if (usb_ok) CDC_Transmit_FS(cdc_tx_buf, msg.len);
+        taskEXIT_CRITICAL();
+    }
 #endif
     }
 }

@@ -74,7 +74,7 @@ void StartRangingTask(void *argument) {
     network_init(dwm_get_addr());
 
     osThreadFlagsWait(0x01, osFlagsWaitAll, osWaitForever);
-
+    uint8_t timer = 0;
     while(1){
         mprintf("Starting sync\r\n");
         HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
@@ -84,6 +84,17 @@ void StartRangingTask(void *argument) {
         position_calculate(result_etwr);
         uint32_t sleep_time = uwb_share (result_etwr, DEEP_SLEEP); //TODO if output is 0 set to last times sleep_time
         HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
+        if(timer++ > 10) {
+            timer = 0;
+            // Heap — most important, run periodically
+            mprintf("[DIAG] heap free=%u  min_ever=%u\r\n",
+                    xPortGetFreeHeapSize(),
+                    xPortGetMinimumEverFreeHeapSize());
+
+            // Stack watermark of the calling task
+            mprintf("[DIAG] stack HWM=%u words\r\n",
+                    uxTaskGetStackHighWaterMark(NULL));
+        }
         osDelay(sleep_time);
     }
     

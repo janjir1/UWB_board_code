@@ -172,6 +172,9 @@ uwb_sync_result_t uwb_sync()
         network_set_expected_seq_num(seq_num);
         osDelay(2);
 
+        if (network_get_count() == 0)
+            uwb_id_delay(network_get_ownid());
+
         if (!uwb_sync_to_all_id(seq_num)) {
             mprintf("ERROR: SYNC TX failed\r\n");
             return UWB_SYNC_TX_FAILED;
@@ -272,7 +275,9 @@ uwb_sync_result_t uwb_sync()
                         if (sync_peer_contains(&rx_msg.data.sync, network_get_ownid())) {
                             mprintf("[SYNC] ack by master 0x%04X\r\n", rx_msg.sender);
                             network_set_acknowledged(true);
+                            mprintf("[SYNC] entering pad\r\n");
                             SYNC_PAD(t_start);
+                            mprintf("[SYNC] pad done\r\n"); 
                             return UWB_SYNC_SLAVE_ACKNOWLEDGED;
 
                         } else {
@@ -423,6 +428,7 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
         }
 
         uint16_t target_id = network_get_highest_uncertainty();
+
         osDelay(2);
 
         uint64_t poll_tx;
@@ -494,7 +500,9 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
                     if (rx_msg.receiver == network_get_ownid()) {
                         /* ---- Responder path ---- */
                         network_store_poll(&rx_msg.data.poll, &RX_MEAS_FROM_FRAME(rx_frame));
-                        osDelay(2);
+
+                        delay_us(50);
+                        //osDelay(2);
 
                         uint64_t resp_tx;
                         if (!uwb_send_RESPONSE(network_get_expected_seq_num(),
@@ -586,7 +594,7 @@ uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)
 
     case UWB_TWR_RECEIVED:
     {
-        osDelay(2);
+        osDelay(1);
         msg_t tx_msg = {
             .type     = MSG_TYPE_SHARE,
             .sender   = network_get_ownid(),
@@ -913,7 +921,7 @@ static uwb_etwr_result_t uwb_wait_for_PASSIVES(uint64_t entries[],
                     *out_count = idx;
                     return UWB_TWR_RECEIVED;
                 }
-                osDelay(2);
+                //osDelay(2);
             }
             break;
         }
@@ -993,7 +1001,7 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
                 passive_msg->entry_rssi_q8[idx] = rx_frame.rssi_q8;
                 passive_msg->entry_ids[idx]     = rx_msg.sender;
                 idx++;
-                osDelay(2);
+                //osDelay(2);
             }
             break;
         }
