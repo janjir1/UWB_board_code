@@ -15,6 +15,14 @@
 #include "position.h"
 #include "lsm6dsv.h"
 
+//TODO create function in driver to force trf off. When reception was successful the antenna currently
+// turns off only after timeout (or at the last time when dwm_rx is called, do not reinitiate)
+//TODO reinitiating the dwm3000 sucks try to use some integrated hw function - do only when extra time is available 
+
+
+//TODO implement sleep
+//TODO when waiting for SHARE we can ho to idle_rc
+
 /* -----------------------------------------------------------------------
  * Forward declarations
  * ----------------------------------------------------------------------- */
