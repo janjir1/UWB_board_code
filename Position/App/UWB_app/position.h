@@ -1,8 +1,9 @@
 #pragma once
 
 #include "uwb_exchange.h"   /* uwb_etwr_result_t */
+#include "messages.h"
 
-void position_calculate(uwb_etwr_result_t result);
+void distance_calculate(uwb_etwr_result_t result);
 
 uint64_t position_calibrate_timestamp(uint64_t orig_timestamp);
 
@@ -37,31 +38,33 @@ typedef struct {
 
 
 typedef struct {
-    uint64_t      init_tx; /**< TX timestamp reported by the passive node. */
-    uwb_rx_meas_t init_rx; /**< Master's RX measurement of the passive node's frame. */
+    uint64_t      init_tx; 
+    uwb_rx_meas_t init_rx; 
 
-    uint64_t      answer_tx; /**< TX timestamp reported by the passive node. */
-    uwb_rx_meas_t answer_rx; /**< Master's RX measurement of the passive node's frame. */
+    uint64_t      answer_tx; 
+    uwb_rx_meas_t answer_rx; 
 } ss_twr_t;
 
 typedef struct {
-    uint64_t      init_tx; /**< TX timestamp reported by the passive node. */
-    uwb_rx_meas_t init_rx; /**< Master's RX measurement of the passive node's frame. */
+    uint64_t      init_tx; 
+    uwb_rx_meas_t init_rx; 
 
-    uwb_rx_meas_t master_init_rx; /**< Master's RX measurement of the passive node's frame. */
+    uwb_rx_meas_t master_init_rx; 
 
-    uint64_t      answer_tx; /**< TX timestamp reported by the passive node. */
-    uwb_rx_meas_t answer_rx; /**< Master's RX measurement of the passive node's frame. */
+    uint64_t      answer_tx; 
+    uwb_rx_meas_t answer_rx; 
 } tdoa_twr_t;
 
 typedef struct {
     uint16_t initiator_id;
     uint16_t responder_id;
 
-    float    init_pitch_rad; /**< IMU pitch angle at the time of the POLL, in radians. */
-    float    responder_pitch_rad; /**< IMU pitch angle at the time of the RESPONSE, in radians. */
+    float    init_vel_horiz;
+    float    init_vel_vert; 
+    float    responder_vel_horiz; 
+    float    responder_vel_vert; 
 
-    twr_timestamps_t twr;               /**< TWR timestamps captured by the master. */
+    twr_timestamps_t twr;              
 
 } first_order_t;
 
@@ -69,12 +72,14 @@ typedef struct {
     uint16_t initiator_id;
     uint16_t responder_id;
 
-    float    init_pitch_rad; /**< IMU pitch angle at the time of the POLL, in radians. */
-    float    responder_pitch_rad; /**< IMU pitch angle at the time of the RESPONSE, in radians. */
+    float    init_vel_horiz;
+    float    init_vel_vert; 
+    float    responder_vel_horiz; 
+    float    responder_vel_vert; 
 
-    twr_observation_t twr_observation; /**< Passive node's view of the POLL/RESPONSE/FINAL timestamps. */
+    twr_observation_t twr_observation; 
 
-    ss_twr_t twr;               /**< TWR timestamps captured by the master. */
+    ss_twr_t twr;              
 
 } second_order_t;
 
@@ -82,12 +87,14 @@ typedef struct {
     uint16_t initiator_id;
     uint16_t responder_id;
 
-    float    init_pitch_rad; /**< IMU pitch angle at the time of the POLL, in radians. */
-    float    responder_pitch_rad; /**< IMU pitch angle at the time of the RESPONSE, in radians. */
+    float    init_vel_horiz;
+    float    init_vel_vert; 
+    float    responder_vel_horiz; 
+    float    responder_vel_vert; 
 
-    twr_observation_t twr_observation; /**< Passive node's view of the POLL/RESPONSE/FINAL timestamps. */
+    twr_observation_t twr_observation; 
 
-    ss_twr_t twr;               /**< TWR timestamps captured by the master. */
+    ss_twr_t twr; 
 
 }  third_order_t;
 
