@@ -1,13 +1,17 @@
 #pragma once
 
-#include "uwb_exchange.h"   /* uwb_etwr_result_t */
-#include "messages.h"
+#include "../UWB_app/uwb_exchange.h"   /* uwb_etwr_result_t */
+#include "../UWB_app/messages.h"
 
 void distance_calculate(uwb_etwr_result_t result);
 
 uint64_t position_calibrate_timestamp(uint64_t orig_timestamp);
 
-/**
+//#define DWT_TIME_UNITS   (1.0 / (499.2e6 * 128.0))
+#define SPEED_OF_LIGHT   299792458.0
+#define METERS_PER_TICK  ((float)(DWT_TIME_UNITS * SPEED_OF_LIGHT)) /* ~4.6917e-3 */
+
+/*
  * @brief Timestamps captured during an active DS-TWR exchange.
  *
  * Role determines which fields are populated:

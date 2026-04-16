@@ -18,7 +18,7 @@ add_library(app STATIC
     UWB_app/messages.c
     UWB_app/uwb_network.c
     UWB_app/uwb_exchange.c
-    UWB_app/position.c
+    Calculations/distance.c
 )
 
 target_include_directories(app PUBLIC
@@ -26,6 +26,7 @@ target_include_directories(app PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/Blink
     ${CMAKE_CURRENT_SOURCE_DIR}/Generic
     ${CMAKE_CURRENT_SOURCE_DIR}/DWM
+    ${CMAKE_CURRENT_SOURCE_DIR}/Calculations
 )
 
 # Both drivers — headers and symbols

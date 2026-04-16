@@ -19,7 +19,7 @@
 #include "DWM3000_driver.h"
 #include "../UWB_app/uwb_exchange.h"
 #include "../UWB_app/uwb_network.h"
-#include "../UWB_app/position.h"
+#include "../Calculations/distance.h"
 
 #define U64_HI(x)  ((uint32_t)((x) >> 32))
 #define U64_LO(x)  ((uint32_t)((x) & 0xFFFFFFFFU))

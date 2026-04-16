@@ -12,7 +12,7 @@
 #include "messages.h"
 #include "../UWB_app/uwb_network.h"
 #include "uwb_exchange.h"
-#include "position.h"
+#include "distance.h"
 #include "lsm6dsv.h"
 
 //TODO create function in driver to force trf off. When reception was successful the antenna currently

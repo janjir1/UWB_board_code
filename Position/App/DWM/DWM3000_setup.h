@@ -3,7 +3,7 @@
 #include "deca_device_api.h"
 
 // DWM3000 configuration parameters
-#define DWM_UWB_CHANNEL       5
+#define DWM_UWB_CHANNEL       9
 #define DWM_UWB_PREAMBLE_LEN  DWT_PLEN_128
 #define DWM_UWB_PAC           DWT_PAC8
 #define DWM_UWB_TX_CODE       9
@@ -37,7 +37,7 @@
 
 #define DWM_CRC_LEN       2U        // DW3000 auto-appends 2-byte CRC to every frame
 #define DWM_RX_TIMEOUT_1S 976562U   // ~1s expressed in UWB symbol ticks (~1µs each)
-#define DWM_ANT_DELAY     16385U    // antenna delay in DWT ticks, applied to TX and RX
+#define DWM_ANT_DELAY     (16385U - 90U)    // antenna delay in DWT ticks, applied to TX and RX
 
 #define DWM_MAX_FRAME_LEN  127
 

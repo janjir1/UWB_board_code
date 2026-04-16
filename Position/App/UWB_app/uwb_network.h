@@ -69,11 +69,19 @@ typedef struct {
  * 1.0 on first add and updated after each EKF step — typically the trace
  * of the position covariance matrix.
  */
+
+typedef struct {
+    uint16_t peer_id;        /**< Network ID of the peer (0 = slot unused). */
+    double distance_ticks;
+    double   k;              /**< Clock ratio  local/peer  (1.0 = uninitialised). */
+    uint8_t  certainty;      
+} node_peer_state_t;
+
 typedef struct {
     uint16_t id;          /**< Network ID. */
     float    pos[3];      /**< Position estimate [x, y, z] in metres.
                            *   Zero-initialised until first fix. */
-    float    uncertainty; /**< EKF uncertainty score (0 = unknown, higher = less certain). */
+    node_peer_state_t peers[NETWORK_MAX_PEERS];
 } node_t;
 
 /* -----------------------------------------------------------------------
@@ -87,7 +95,7 @@ typedef struct {
  * Direct access to the underlying instance is not exposed.
  */
 typedef struct {
-    node_t   peers[NETWORK_MAX_PEERS]; /**< Known active peers (excludes self). */
+    node_t   peers[NETWORK_MAX_PEERS]; 
     uint8_t  expected_seq_num;         /**< Sequence number expected in the next
                                         *   incoming UWB frame. */
     uint8_t  count;                    /**< Number of valid entries in @c peers. */
@@ -258,7 +266,7 @@ bool network_is_acknowledged(void);
  * @param pos          3-element array [x, y, z] in metres.
  * @param uncertainty  EKF uncertainty score to store.
  */
-void network_set_self_pos(const float pos[3], float uncertainty);
+void network_set_self_pos(const float pos[3]);
 
 /**
  * @brief Return the ID of the peer with the highest position uncertainty.
@@ -300,6 +308,20 @@ void network_set_expected_seq_num(uint8_t seq_num);
  * @return Current expected sequence number.
  */
 uint8_t network_get_expected_seq_num(void);
+
+/* -----------------------------------------------------------------------
+ * Per-peer ranging state (distance, k, certainty)
+ * ----------------------------------------------------------------------- */
+
+void    network_set_distance   (uint16_t a, uint16_t b, double ticks);
+double  network_get_distance   (uint16_t a, uint16_t b);
+void    network_set_k          (uint16_t a, uint16_t b, double k);
+double  network_get_k          (uint16_t a, uint16_t b);
+void    network_bump_certainty (uint16_t a, uint16_t b);
+void    network_reset_certainty(uint16_t a, uint16_t b);
+uint8_t network_get_certainty  (uint16_t a, uint16_t b);
+void network_decay_certainty(void);
+void network_update_certainty(uint16_t a, uint16_t b, bool ds_twr);
 
 #ifdef __cplusplus
 }
