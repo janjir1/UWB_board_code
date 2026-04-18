@@ -28,8 +28,8 @@ extern "C" {
  * measurement exists on transmission.
  */
 typedef struct {
-    uint64_t ts;        /**< UWB hardware timestamp (~15 ps resolution). */
-    int16_t  rssi_q8;   /**< Total received power, Q8 fixed-point (dBm × 256). */
+    uint64_t ts;             /**< UWB hardware timestamp (~15 ps resolution). */
+    int16_t  pwr_diff_q8;   /**< Total received power, Q8 fixed-point (dBm × 256). */
 } uwb_rx_meas_t;
 
 

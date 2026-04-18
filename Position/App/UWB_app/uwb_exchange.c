@@ -56,7 +56,7 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
 /** @brief Construct a uwb_rx_meas_t inline from a dwm_rx_frame_t. */
 #define RX_MEAS_FROM_FRAME(frame) \
     (uwb_rx_meas_t){ .ts = (frame).rx_timestamp, \
-                     .rssi_q8 = (frame).rssi_q8}
+                     .pwr_diff_q8 = (frame).rssi_q8 - (frame).fp_q8 }
 
 /** @brief Extract high 32 bits of a uint64_t for two-word mprintf. */
 #define U64_HI(x) ((uint32_t)((x) >> 32))
@@ -327,7 +327,7 @@ uwb_sync_result_t uwb_sync()
 
 static bool uwb_wait_for_RESPONSE(uint16_t target_id,
                                    uint64_t *out_resp_rx_ts,
-                                   int16_t *out_resp_rssi_q8)
+                                   int16_t *out_resp_pwr_diff_q8)
 {
     dwm_rx_frame_t rx_frame = {0};
     uint32_t t_start = osKernelGetTickCount();
@@ -356,7 +356,7 @@ static bool uwb_wait_for_RESPONSE(uint16_t target_id,
                     break;
 
                 *out_resp_rx_ts  = rx_frame.rx_timestamp;
-                *out_resp_rssi_q8 = rx_frame.rssi_q8;
+                *out_resp_pwr_diff_q8 = rx_frame.rssi_q8 - rx_frame.fp_q8;
                 return true;
             }
             mprintf("ERROR: unexpected msg 0x%02X from 0x%04X during RESPONSE wait\r\n",
@@ -404,7 +404,7 @@ static bool uwb_wait_for_FINAL()
 
                 network_store_final(&rx_msg.data.final,
                                     &(uwb_rx_meas_t){ .ts = rx_frame.rx_timestamp,
-                                                      .rssi_q8 = rx_frame.rssi_q8 });
+                                                        .pwr_diff_q8 = rx_frame.rssi_q8 - rx_frame.fp_q8 });
                 return true;
             }
             mprintf("ERROR: unexpected msg 0x%02X from 0x%04X during FINAL wait\r\n",
@@ -459,18 +459,18 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
             .poll_tx_ts = poll_tx,
         };
 
-        if (!uwb_wait_for_RESPONSE(target_id, &final_msg.resp_rx_ts, &final_msg.resp_rssi_q8))
+        if (!uwb_wait_for_RESPONSE(target_id, &final_msg.resp_rx_ts, &final_msg.resp_pwr_diff_q8))
             return UWB_TWR_TIMEOUT;
 
         msg_passive_t passive_msgs[NETWORK_MAX_PEERS - 2];
-        uwb_wait_for_PASSIVES(final_msg.entries, final_msg.entry_rssi_q8,
+        uwb_wait_for_PASSIVES(final_msg.entries, final_msg.entry_pwr_diff_q8,
                               final_msg.entry_id, &final_msg.entry_count,
                               passive_msgs, target_id);
 
         if (!uwb_send_FINAL(network_get_expected_seq_num(), target_id, &final_msg))
             return UWB_TWR_TX_FAILED;
 
-        network_set_master(target_id);
+        //network_set_master(target_id);
         return UWB_TWR_EXCHANGE_COMPLETE;
     }
 
@@ -530,24 +530,25 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
                         network_store_resp_tx(resp_tx);
 
                         uint64_t entries[NETWORK_MAX_PEERS - 2];
-                        int16_t  entry_rssi[NETWORK_MAX_PEERS - 2];
+                        int16_t  entry_pwr_diff_q8[NETWORK_MAX_PEERS - 2];
                         uint16_t entry_ids[NETWORK_MAX_PEERS - 2];
                         uint8_t  count = 0;
                         msg_passive_t passive_msgs[NETWORK_MAX_PEERS - 2];
 
-                        uwb_wait_for_PASSIVES(entries, entry_rssi, entry_ids,
+                        uwb_wait_for_PASSIVES(entries, entry_pwr_diff_q8, entry_ids,
                                               &count, passive_msgs, network_get_master());
 
                         for (uint8_t idx = 0; idx < count; idx++) {
                             network_store_passive(idx, &passive_msgs[idx],
                                                   &(uwb_rx_meas_t){ .ts = entries[idx],
-                                                                     .rssi_q8 = entry_rssi[idx] },
+                                                                    .pwr_diff_q8 = entry_pwr_diff_q8[idx] },
                                                   entry_ids[idx]);
                         }
 
-                        uwb_wait_for_FINAL();
-                        network_set_master(network_get_ownid());
-                        mprintf("[TWR] FINAL received — now master\r\n");
+                        if (!uwb_wait_for_FINAL()) {
+                            return UWB_TWR_TIMEOUT;  // Abort! Do not run distance calculations.
+                        }
+                        mprintf("[TWR] FINAL received\r\n");
                         return UWB_TWR_RECEIVED;
 
                     } else if (network_is_acknowledged()) {
@@ -555,18 +556,18 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
                         msg_passive_t passive_msg = {
                             .seq_num      = rx_msg.data.poll.seq_num,
                             .poll_rx_ts   = rx_frame.rx_timestamp,
-                            .poll_rssi_q8 = rx_frame.rssi_q8,
+                            .poll_pwr_diff_q8 = rx_frame.rssi_q8 - rx_frame.fp_q8,
                         };
 
                         if (!uwb_wait_for_RESPONSE(rx_msg.receiver,
                                                    &passive_msg.resp_rx_ts,
-                                                   &passive_msg.resp_rssi_q8))
+                                                   &passive_msg.resp_pwr_diff_q8))
                             return UWB_TWR_TIMEOUT;
 
                         uwb_etwr_result_t result = uwb_send_PASSIVE(network_get_master(),
                                                                      rx_msg.receiver,
                                                                      &passive_msg);
-                        network_set_master(rx_msg.receiver);
+                        //network_set_master(rx_msg.receiver);
                         return result;
                     }
                 }
@@ -613,9 +614,18 @@ void uwb_build_share(msg_share_t *out, uint8_t seq, uint32_t sleep_time)
     uint8_t n = 0;
     network_t *net = network_get_network();
     out->node_ids[n++] = net->self.id;
-    for (uint8_t i = 0; i < net->count && n < NETWORK_MAX_PEERS; i++)
+    for (uint8_t i = 0; i < net->count && n < NETWORK_MAX_PEERS; i++) {
         out->node_ids[n++] = net->peers[i].id;
+    }
     out->node_count = n;
+
+    /* ---> DIAGNOSTIC MPRINTF FOR BUG 3 <--- */
+    mprintf("[DIAG_SHARE] Building SHARE msg. Nodes (%u): ", out->node_count);
+    for (uint8_t d = 0; d < out->node_count; d++) {
+        mprintf("0x%04X ", out->node_ids[d]);
+    }
+    mprintf("\r\n");
+    /* -------------------------------------- */
 
     /* ── Per-node IMU velocities ── */
     for (uint8_t i = 0; i < n; i++) {
@@ -720,6 +730,7 @@ uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)
     case UWB_TWR_RECEIVED:
     {
         osDelay(1);
+        network_set_master(network_get_ownid());
 
         msg_share_t share;
         uwb_build_share(&share, network_get_expected_seq_num(), sleep_time);
@@ -779,7 +790,7 @@ uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)
                 if (rx_msg.type == MSG_TYPE_SHARE) {
                     if (!seq_ok(rx_msg.data.share.seq_num, "SHARE"))
                         break;
-
+                    network_set_master(rx_msg.sender);
                     /* ── Apply broadcast data into network state ── */
                     uwb_read_share(&rx_msg.data.share);
 
@@ -985,7 +996,7 @@ static bool uwb_send_FINAL(uint8_t seq_num, uint16_t target_id, msg_final_t *fin
 }
 
 static uwb_etwr_result_t uwb_wait_for_PASSIVES(uint64_t entries[],
-                                               int16_t entry_rssi_q8[],
+                                               int16_t entry_pwr_diff_q8[],
                                                uint16_t entry_ids[],
                                                uint8_t *out_count,
                                                msg_passive_t out_passive_msgs[],
@@ -1045,7 +1056,7 @@ static uwb_etwr_result_t uwb_wait_for_PASSIVES(uint64_t entries[],
                 }
 
                 entries[idx]          = rx_frame.rx_timestamp;
-                entry_rssi_q8[idx]    = rx_frame.rssi_q8;
+                entry_pwr_diff_q8[idx] = rx_frame.rssi_q8 - rx_frame.fp_q8;
                 out_passive_msgs[idx] = rx_msg.data.passive;
                 entry_ids[idx]        = rx_msg.sender;
                 idx++;
@@ -1134,7 +1145,7 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
                     break;
 
                 passive_msg->entries[idx]       = rx_frame.rx_timestamp;
-                passive_msg->entry_rssi_q8[idx] = rx_frame.rssi_q8;
+                passive_msg->entry_pwr_diff_q8[idx] = rx_frame.rssi_q8 - rx_frame.fp_q8;
                 passive_msg->entry_ids[idx]     = rx_msg.sender;
                 idx++;
             }

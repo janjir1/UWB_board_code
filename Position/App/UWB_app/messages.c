@@ -181,12 +181,12 @@ static void msg_decode_final(const dwm_rx_frame_t *frame, msg_final_t *out)
     memcpy(&out->resp_rx_ts,   p, MSG_TS_LEN);      p += MSG_TS_LEN;
     memcpy(&out->final_tx_ts,  p, MSG_TS_LEN);      p += MSG_TS_LEN;
 
-    memcpy(&out->resp_rssi_q8, p, sizeof(int16_t)); p += sizeof(int16_t);
+    memcpy(&out->resp_pwr_diff_q8, p, sizeof(int16_t)); p += sizeof(int16_t);
 
     out->entry_count = *p++;
     for (int i = 0; i < out->entry_count && i < (NETWORK_MAX_PEERS - 2); i++) {
         memcpy(&out->entries[i],      p, MSG_TS_LEN);        p += MSG_TS_LEN;
-        memcpy(&out->entry_rssi_q8[i], p, sizeof(int16_t)); p += sizeof(int16_t);
+        memcpy(&out->entry_pwr_diff_q8[i], p, sizeof(int16_t)); p += sizeof(int16_t);
         memcpy(&out->entry_id[i],      p, sizeof(uint16_t)); p += sizeof(uint16_t); // ← new
     }
 
@@ -255,10 +255,10 @@ static void msg_decode_passive(const dwm_rx_frame_t *frame, msg_passive_t *out)
     out->seq_num = *p++;
 
     memcpy(&out->poll_rx_ts,   p, MSG_TS_LEN);       p += MSG_TS_LEN;
-    memcpy(&out->poll_rssi_q8, p, sizeof(int16_t));  p += sizeof(int16_t);
+    memcpy(&out->poll_pwr_diff_q8, p, sizeof(int16_t));  p += sizeof(int16_t);
 
     memcpy(&out->resp_rx_ts,   p, MSG_TS_LEN);       p += MSG_TS_LEN;
-    memcpy(&out->resp_rssi_q8, p, sizeof(int16_t));  p += sizeof(int16_t);
+    memcpy(&out->resp_pwr_diff_q8, p, sizeof(int16_t));  p += sizeof(int16_t);
 
     /* final_rx_ts removed — PASSIVE now transmits before FINAL */
 
@@ -267,7 +267,7 @@ static void msg_decode_passive(const dwm_rx_frame_t *frame, msg_passive_t *out)
     out->entry_count = *p++;
     for (int i = 0; i < out->entry_count && i < (NETWORK_MAX_PEERS - 2); i++) {
         memcpy(&out->entries[i],       p, MSG_TS_LEN);       p += MSG_TS_LEN;
-        memcpy(&out->entry_rssi_q8[i], p, sizeof(int16_t)); p += sizeof(int16_t);
+        memcpy(&out->entry_pwr_diff_q8[i], p, sizeof(int16_t)); p += sizeof(int16_t);
         memcpy(&out->entry_ids[i],     p, sizeof(uint16_t)); p += sizeof(uint16_t);
     }
 
@@ -359,12 +359,12 @@ static uint16_t msg_encode_final(const msg_final_t *in, uint8_t *buf)
     u64_to_ts_buf(in->resp_rx_ts,  p); p += MSG_TS_LEN;
     u64_to_ts_buf(in->final_tx_ts, p); p += MSG_TS_LEN;
 
-    memcpy(p, &in->resp_rssi_q8, sizeof(int16_t)); p += sizeof(int16_t);
+    memcpy(p, &in->resp_pwr_diff_q8, sizeof(int16_t)); p += sizeof(int16_t);
 
     *p++ = in->entry_count;
     for (int i = 0; i < in->entry_count; i++) {
         u64_to_ts_buf(in->entries[i], p);                    p += MSG_TS_LEN;
-        memcpy(p, &in->entry_rssi_q8[i], sizeof(int16_t));  p += sizeof(int16_t);
+        memcpy(p, &in->entry_pwr_diff_q8[i], sizeof(int16_t));  p += sizeof(int16_t);
         memcpy(p, &in->entry_id[i],      sizeof(uint16_t)); p += sizeof(uint16_t); // ← new
     }
 
@@ -425,10 +425,10 @@ static uint16_t msg_encode_passive(const msg_passive_t *in, uint8_t *buf)
     *p++ = in->seq_num;
 
     u64_to_ts_buf(in->poll_rx_ts, p);       p += MSG_TS_LEN;
-    memcpy(p, &in->poll_rssi_q8, sizeof(int16_t));  p += sizeof(int16_t);
+    memcpy(p, &in->poll_pwr_diff_q8, sizeof(int16_t));  p += sizeof(int16_t);
 
     u64_to_ts_buf(in->resp_rx_ts, p);       p += MSG_TS_LEN;
-    memcpy(p, &in->resp_rssi_q8, sizeof(int16_t));  p += sizeof(int16_t);
+    memcpy(p, &in->resp_pwr_diff_q8, sizeof(int16_t));  p += sizeof(int16_t);
 
     /* final_rx_ts removed */
     u64_to_ts_buf(in->passive_tx_ts, p); p += MSG_TS_LEN;
@@ -436,7 +436,7 @@ static uint16_t msg_encode_passive(const msg_passive_t *in, uint8_t *buf)
     *p++ = in->entry_count;
     for (int i = 0; i < in->entry_count; i++) {
         u64_to_ts_buf(in->entries[i], p);       p += MSG_TS_LEN;
-        memcpy(p, &in->entry_rssi_q8[i], sizeof(int16_t)); p += sizeof(int16_t);
+        memcpy(p, &in->entry_pwr_diff_q8[i], sizeof(int16_t)); p += sizeof(int16_t);
         memcpy(p, &in->entry_ids[i],     sizeof(uint16_t));  p += sizeof(uint16_t);
     }
 
@@ -559,7 +559,7 @@ static void test_final(void)
             .poll_tx_ts  = 0x0000001111111111ULL,
             .resp_rx_ts  = 0x0000002222222222ULL,
             .final_tx_ts = 0x0000003333333333ULL,
-            .resp_rssi_q8 = -400,
+            .resp_pwr_diff_q8 = -400,
         }
     };
 

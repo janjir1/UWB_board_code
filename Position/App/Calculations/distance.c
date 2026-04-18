@@ -18,6 +18,8 @@
 
 timestamps_t timestamps;
 #define UWB_40BIT_MASK 0xFFFFFFFFFFULL
+//TODO encoding horiyontal velocity can lose the +/- sign and thus incerease the accuracy, as we stil dont know the direction
+//we cannot do it for vertical, as we know if its up or down.
 
 static inline uint8_t vel_ms_to_u8(float vel_ms)
 {
@@ -81,7 +83,7 @@ void populate_computation_structs(timestamps_t *ts) {
     ts->first.twr.final_rx        = meas->final_rx;
     ts->first.twr.poll_tx         = meas->final.poll_tx_ts;
     ts->first.twr.resp_rx.ts      = meas->final.resp_rx_ts;
-    ts->first.twr.resp_rx.rssi_q8 = meas->final.resp_rssi_q8;
+    ts->first.twr.resp_rx.pwr_diff_q8 = meas->final.resp_pwr_diff_q8;
     ts->first.twr.final_tx        = meas->final.final_tx_ts;
 
 
@@ -95,11 +97,11 @@ void populate_computation_structs(timestamps_t *ts) {
         twr_observation_t shared_obs = {
             .poll_rx = {
                 .ts      = meas->passive[i].poll_rx_ts,
-                .rssi_q8 = meas->passive[i].poll_rssi_q8,
+                .pwr_diff_q8 = meas->passive[i].poll_pwr_diff_q8,
             },
             .resp_rx = {
                 .ts      = meas->passive[i].resp_rx_ts,
-                .rssi_q8 = meas->passive[i].resp_rssi_q8,
+                .pwr_diff_q8 = meas->passive[i].resp_pwr_diff_q8,
             },
         };
 
@@ -107,7 +109,7 @@ void populate_computation_structs(timestamps_t *ts) {
         for (uint8_t k = 0; k < meas->final.entry_count; k++) {
             if (meas->final.entry_id[k] == passive_id) {
                 a_rx_of_passive.ts      = meas->final.entries[k];
-                a_rx_of_passive.rssi_q8 = meas->final.entry_rssi_q8[k];
+                a_rx_of_passive.pwr_diff_q8 = meas->final.entry_pwr_diff_q8[k];
                 break;
             }
         }
@@ -176,7 +178,7 @@ void populate_computation_structs(timestamps_t *ts) {
         for (uint8_t k = 0; k < meas->passive[j].entry_count; k++) {
             if (meas->passive[j].entry_ids[k] == meas->passive_device_id[i]) {
                 j_rx_of_i.ts      = meas->passive[j].entries[k];
-                j_rx_of_i.rssi_q8 = meas->passive[j].entry_rssi_q8[k];
+                j_rx_of_i.pwr_diff_q8 = meas->passive[j].entry_pwr_diff_q8[k];
                 break;
             }
         }
@@ -185,7 +187,7 @@ void populate_computation_structs(timestamps_t *ts) {
         for (uint8_t k = 0; k < meas->passive[i].entry_count; k++) {
             if (meas->passive[i].entry_ids[k] == meas->passive_device_id[j]) {
                 i_rx_of_j.ts      = meas->passive[i].entries[k];
-                i_rx_of_j.rssi_q8 = meas->passive[i].entry_rssi_q8[k];
+                i_rx_of_j.pwr_diff_q8 = meas->passive[i].entry_pwr_diff_q8[k];
                 break;
             }
         }
@@ -211,9 +213,9 @@ static bool check_uwb_rx_meas(const uwb_rx_meas_t *m, const char *name)
         mprintf("[FAIL] %s.ts == 0 (unpopulated)\n", name);
         return false;
     }
-    if (m->rssi_q8 == 0) {
-        /* 0 dBm is physically possible, but suspicious — warn only */
-        mprintf("[WARN] %s.rssi_q8 == 0 (0 dBm — check if intentional)\n", name);
+    if (m->pwr_diff_q8 == 0) {
+        /* 0 dB is physically possible, but suspicious — warn only */
+        mprintf("[WARN] %s.pwr_diff_q8 == 0 (0 dB — check if intentional)\n", name);
     }
     return true;
 }
@@ -376,10 +378,21 @@ double calculate_first_order_distance_ticks(const first_order_t *f)
     }
 
     /* 2. Same-domain constraint: both on the responder's clock */
-    if (T_reply1 >= T_round1) {
-        mprintf("[ERR] first_order: T_reply1(%u) >= T_round1(%u) — poll_rx or resp_tx bad\n",
+    int64_t diff1 = (int64_t)T_round1 - (int64_t)T_reply1;
+    if (diff1 < -500) {
+        mprintf("[ERR] first_order: T_reply1(%u) massively exceeds T_round1(%u)\n",
                 (uint32_t)T_reply1, (uint32_t)T_round1);
         return -1.0;
+    } else if (diff1 < 0) {
+        T_round1 = T_reply1; /* Clamp to 0 distance for this segment */
+    }
+
+    int64_t diff2 = (int64_t)T_round2 - (int64_t)T_reply2;
+    if (diff2 < -500) {
+        mprintf("[ERR] first_order: T_reply2 massively exceeds T_round2\n");
+        return -1.0;
+    } else if (diff2 < 0) {
+        T_round2 = T_reply2; /* Clamp to 0 distance for this segment */
     }
 
     /* 3. DS-TWR formula — each cast individually, sum stays in double */
@@ -453,13 +466,19 @@ second_order_result_t calculate_second_order_distances(
     double dt_A_ref   = T_round1_A - tof_ab_ticks;
     double dt_B_ref   = (double)((ft->resp_tx - ft->poll_rx.ts) & UWB_40BIT_MASK);
 
-    if (tof_ab_ticks >= T_round1_A) {
-        mprintf("[ERR] second_order: tof_ab_ticks >= T_round1_A\n");
+    if (tof_ab_ticks > T_round1_A + 500.0) {
+        mprintf("[ERR] second_order: tof_ab_ticks massively exceeds T_round1_A\n");
         return result;
+    } else if (tof_ab_ticks >= T_round1_A) {
+        tof_ab_ticks = T_round1_A - 0.1; /* Clamp to keep dt_A_ref slightly positive */
+        dt_A_ref = 0.1;
     }
-    if (dt_A_ref <= 0.0 || dt_B_ref <= 0.0) {
-        mprintf("[ERR] second_order: zero or negative step1 reference\n");
+
+    if (dt_B_ref < -500.0) {
+        mprintf("[ERR] second_order: massively negative dt_B_ref\n");
         return result;
+    } else if (dt_B_ref <= 0.0) {
+        dt_B_ref = 0.1; /* Clamp to keep dt_B_ref slightly positive */
     }
 
     /* ═══════════════════════════════════════════════════
@@ -660,6 +679,9 @@ void distance_calculate(uwb_etwr_result_t result)
                     prev_ac, prev_bc,
                     &k_A, &k_B);
 
+            if (res.tof_ac_ticks < 0.0) res.tof_ac_ticks = 0.0;
+            if (res.tof_bc_ticks < 0.0) res.tof_bc_ticks = 0.0;
+
             network_set_distance(id_A, id_C, dist_ticks_to_scale(res.tof_ac_ticks));
             network_set_distance(id_C, id_A, dist_ticks_to_scale(res.tof_ac_ticks));
 
@@ -674,6 +696,9 @@ void distance_calculate(uwb_etwr_result_t result)
              */
             network_update_certainty(id_B, id_C, false);
             network_update_certainty(id_C, id_B, false);
+
+            network_update_certainty(id_A, id_C, false);
+            network_update_certainty(id_C, id_A, false);
 
             mprintf("---After SS-TWR -----");
             network_print_certainty();

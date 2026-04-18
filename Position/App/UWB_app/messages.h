@@ -155,14 +155,14 @@ typedef struct {
     uint64_t poll_tx_ts;        /**< Actual TX timestamp of the POLL (40-bit, little-endian). */
     uint64_t resp_rx_ts;        /**< Initiator's RX timestamp of the RESPONSE (40-bit). */
     uint64_t final_tx_ts;       /**< Predicted TX timestamp of this FINAL (40-bit). */
-    int16_t  resp_rssi_q8;      /**< RSSI measured by initiator on RESPONSE reception (Q8). */
+    int16_t  resp_pwr_diff_q8;      /**< RSSI measured by initiator on RESPONSE reception (Q8). */
 
     /* --- Preceding PASSIVE TX timestamps, in peer-list order --- */
     uint8_t  entry_count;                       /**< Number of valid entries in @c entries. */
     uint64_t entries[NETWORK_MAX_PEERS - 2];    /**< TX timestamps of preceding PASSIVE frames.
                                                  *   The TWR pair (initiator + responder) never
                                                  *   send passive frames, hence the -2. */
-    int16_t entry_rssi_q8[NETWORK_MAX_PEERS - 2];
+    int16_t entry_pwr_diff_q8[NETWORK_MAX_PEERS - 2];
     uint16_t entry_id[NETWORK_MAX_PEERS - 2];
 
     float IMU_pitch_rad;
@@ -202,10 +202,10 @@ typedef struct {
 
     /* --- Passive observations of the active TWR frames --- */
     uint64_t poll_rx_ts;    /**< RX timestamp of POLL at this passive node (40-bit). */
-    int16_t  poll_rssi_q8;   /**< RSSI of the received POLL at this node (Q8). */
+    int16_t  poll_pwr_diff_q8;   /**< RSSI of the received POLL at this node (Q8). */
 
     uint64_t resp_rx_ts;    /**< RX timestamp of RESPONSE at this passive node (40-bit). */
-    int16_t  resp_rssi_q8;   /**< RSSI of the received RESPONSE at this node (Q8). */
+    int16_t  resp_pwr_diff_q8;   /**< RSSI of the received RESPONSE at this node (Q8). */
 
     /* --- This node's own PASSIVE transmission --- */
     uint64_t passive_tx_ts; /**< Predicted TX timestamp of this PASSIVE frame (40-bit). */
@@ -215,7 +215,7 @@ typedef struct {
     uint64_t entries[NETWORK_MAX_PEERS - 2];    /**< TX timestamps of preceding PASSIVE frames.
                                                  *   The TWR pair (initiator + responder) never
                                                  *   send passive frames, hence the -2. */
-    int16_t entry_rssi_q8[NETWORK_MAX_PEERS - 2]; /**< RSSI of the received PASSIVE frames at this node (Q8). */
+    int16_t entry_pwr_diff_q8[NETWORK_MAX_PEERS - 2]; /**< RSSI of the received PASSIVE frames at this node (Q8). */
     uint16_t entry_ids[NETWORK_MAX_PEERS - 2];    /**< Network IDs of the preceding PASSIVE frames, in the same order as @c entries. */
 
     float IMU_pitch_rad;
