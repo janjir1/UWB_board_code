@@ -196,20 +196,53 @@ static void msg_decode_final(const dwm_rx_frame_t *frame, msg_final_t *out)
 }
 
 /**
- * @brief Decode a SHARE message payload.
+ * @brief Flat upper-triangle pair index for nodes at positions i < j.
+ *        (0,1)→0  (0,2)→1  (0,3)→2  (1,2)→3  (1,3)→4  (2,3)→5  …
+ */
+static inline uint8_t share_pair_index(uint8_t i, uint8_t j, uint8_t n)
+{
+    return (uint8_t)(i * (2u * n - i - 1u) / 2u + (j - i - 1u));
+}
+
+/**
+ * @brief Decode a SHARE message payload. 
  *
- * Extracts the sender's planned sleep time so the receiver can align
- * its own wake schedule to the next cycle.
- *
- * @param[in]  frame  Raw RX frame.
- * @param[out] out    Decoded share struct to populate.
+ * Pair ownership is recovered from node_ids[] ordering — no per-pair
+ * IDs are transmitted. Use share_pair_index(i, j, out->node_count)
+ * to map a pair back to node_ids[i] ↔ node_ids[j].
  */
 static void msg_decode_share(const dwm_rx_frame_t *frame, msg_share_t *out)
 {
-    out->seq_num = frame->data[MSG_PAYLOAD_OFFSET_SEQ];
-    memcpy(&out->sleep_time,
-           &frame->data[MSG_PAYLOAD_OFFSET_SHARE_SLEEP],
-           sizeof(uint32_t));
+    const uint8_t *p = &frame->data[MSG_PAYLOAD_OFFSET_SEQ];
+    memset(out, 0, sizeof(*out));
+
+    out->seq_num = *p++;
+    memcpy(&out->sleep_time, p, sizeof(uint32_t)); p += sizeof(uint32_t);
+
+    uint8_t n = *p++;
+    if (n > NETWORK_MAX_PEERS) n = NETWORK_MAX_PEERS;
+    out->node_count = n;
+
+    for (uint8_t i = 0; i < n; i++) {
+        memcpy(&out->node_ids[i], p, sizeof(uint16_t)); p += sizeof(uint16_t);
+    }
+
+    for (uint8_t i = 0; i < n; i++) out->vel_vert[i]  = *p++;
+    for (uint8_t i = 0; i < n; i++) out->vel_horiz[i] = *p++;
+
+    for (uint8_t i = 0; i < n; i++) {
+        for (uint8_t j = i + 1u; j < n; j++) {
+            uint8_t idx = share_pair_index(i, j, n);
+            memcpy(&out->distance_mm[idx], p, sizeof(uint16_t)); p += sizeof(uint16_t);
+        }
+    }
+
+    for (uint8_t i = 0; i < n; i++) {
+        for (uint8_t j = i + 1u; j < n; j++) {
+            uint8_t idx = share_pair_index(i, j, n);
+            out->accuracy[idx] = *p++;
+        }
+    }
 }
 
 
@@ -345,22 +378,43 @@ static uint16_t msg_encode_final(const msg_final_t *in, uint8_t *buf)
 /**
  * @brief Encode a SHARE message payload into the wire buffer.
  *
- * Wire layout:
- * @code
- * [SEQ]   1 byte
- * [SLEEP] 4 bytes  sleep_time — ms until next cycle
- * @endcode
- *
- * @param[in]  in   Populated share struct.
- * @param[out] buf  Output buffer (at least MSG_PAYLOAD_OFFSET_SHARE_SLEEP +
- *                  sizeof(uint32_t) bytes).
- * @return Total bytes written.
+ * Wire layout (little-endian):
+ *   [SEQ 1B] [SLEEP 4B] [NODE_COUNT 1B]
+ *   [NODE_IDS N×2B] [VEL_VERT N×1B] [VEL_HORIZ N×1B]
+ *   [DISTANCES P×2B] [ACCURACY P×1B]   where P = N*(N-1)/2
  */
 static uint16_t msg_encode_share(const msg_share_t *in, uint8_t *buf)
 {
-    buf[MSG_PAYLOAD_OFFSET_SEQ] = in->seq_num;
-    memcpy(&buf[MSG_PAYLOAD_OFFSET_SHARE_SLEEP], &in->sleep_time, sizeof(uint32_t));
-    return MSG_PAYLOAD_OFFSET_SHARE_SLEEP + sizeof(uint32_t);
+    uint8_t *p = &buf[MSG_PAYLOAD_OFFSET_SEQ];
+    uint8_t n = in->node_count;
+    if (n > NETWORK_MAX_PEERS) n = NETWORK_MAX_PEERS;
+
+    *p++ = in->seq_num;
+    memcpy(p, &in->sleep_time, sizeof(uint32_t)); p += sizeof(uint32_t);
+    *p++ = n;
+
+    for (uint8_t i = 0; i < n; i++) {
+        memcpy(p, &in->node_ids[i], sizeof(uint16_t)); p += sizeof(uint16_t);
+    }
+
+    for (uint8_t i = 0; i < n; i++) *p++ = in->vel_vert[i];
+    for (uint8_t i = 0; i < n; i++) *p++ = in->vel_horiz[i];
+
+    for (uint8_t i = 0; i < n; i++) {
+        for (uint8_t j = i + 1u; j < n; j++) {
+            uint8_t idx = share_pair_index(i, j, n);
+            memcpy(p, &in->distance_mm[idx], sizeof(uint16_t)); p += sizeof(uint16_t);
+        }
+    }
+
+    for (uint8_t i = 0; i < n; i++) {
+        for (uint8_t j = i + 1u; j < n; j++) {
+            uint8_t idx = share_pair_index(i, j, n);
+            *p++ = in->accuracy[idx];
+        }
+    }
+
+    return (uint16_t)(p - buf);
 }
 
 

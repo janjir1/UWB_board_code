@@ -8,8 +8,20 @@ void distance_calculate(uwb_etwr_result_t result);
 uint64_t position_calibrate_timestamp(uint64_t orig_timestamp);
 
 //#define DWT_TIME_UNITS   (1.0 / (499.2e6 * 128.0))
-#define SPEED_OF_LIGHT   299792458.0
+#define SPEED_OF_LIGHT   299702547.0
 #define METERS_PER_TICK  ((float)(DWT_TIME_UNITS * SPEED_OF_LIGHT)) /* ~4.6917e-3 */
+
+#define MAX_PASSIVE          (NETWORK_MAX_PEERS - 2)           /* 5 */
+#define MAX_SECOND_ORDER     (2 * MAX_PASSIVE)                 /* 10 */
+#define MAX_THIRD_ORDER      (MAX_PASSIVE * (MAX_PASSIVE - 1) / 2)  /* 10 */
+
+#define DWT_TIME_UNITS    (1.0 / 499.2e6 / 128.0)
+#define DIST_SHARE_MAX_M        200.0
+#define DIST_SHARE_DIST_MAX_TICKS    (DIST_SHARE_MAX_M / (SPEED_OF_LIGHT * DWT_TIME_UNITS))
+#define DIST_SHARE_TICKS_PER_LSB     (DIST_SHARE_DIST_MAX_TICKS / 65535.0)
+
+#define VEL_SHARE_RANGE_MS   4.0f                              /* 2g × 200ms */
+#define VEL_SHARE_MS_PER_LSB (2.0f * VEL_SHARE_RANGE_MS / 255.0f)  /* ~30.8 mm/s */
 
 /*
  * @brief Timestamps captured during an active DS-TWR exchange.
@@ -113,3 +125,11 @@ typedef struct {
     uint8_t        third_count;
 
 } timestamps_t;
+
+typedef struct {
+    double tof_ac_ticks;  /**< A <-> C ToF in ticks, -1.0 on error */
+    double tof_bc_ticks;  /**< B <-> C ToF in ticks, -1.0 on error */
+} second_order_result_t;
+
+uint16_t dist_ticks_to_scale(double ticks);
+double dist_scale_to_ticks(uint16_t encoded);

@@ -18,8 +18,8 @@
 #include "../Generic/my_print.h"
 #include "DWM3000_setup.h"
 #include "DWM3000_driver.h"
-
 #include "../UWB_app/uwb_network.h"
+#include "../Calculations/distance.h"
 
 static network_t net;
 
@@ -35,7 +35,7 @@ static network_t net;
  * @param id Network ID to find.
  * @return Pointer to the matching @ref node_t, or @c NULL if not found.
  */
-static node_t *find_peer(uint16_t id)
+node_t *find_peer(uint16_t id)
 {
     for (int i = 0; i < net.count; i++)
         if (net.peers[i].id == id) return &net.peers[i];
@@ -84,6 +84,16 @@ void network_remove_peer(uint16_t id)
             net.peers[i] = net.peers[net.count - 1];
             memset(&net.peers[net.count - 1], 0, sizeof(node_t));
             net.count--;
+
+            /* Reset self's slot for this peer so it gets highest priority on rejoin */
+            for (uint8_t j = 0; j < NETWORK_MAX_PEERS; j++) {
+                if (net.self.peers[j].peer_id == id) {
+                    net.self.peers[j].certainty      = 0;
+                    net.self.peers[j].distance_scaled = 0xFFFF;
+                    net.self.peers[j].k              = 1.0;
+                    break;
+                }
+            }
             return;
         }
     }
@@ -114,9 +124,6 @@ void network_update_peers_from_sync(uint16_t master_id,
                                     const uint16_t *peer_ids,
                                     uint8_t peer_count)
 {
-    /* Rebuild the peer list from the master's SYNC payload.
-     * Preserve existing position and uncertainty data for known peers.
-     * Peers absent from the SYNC are considered gone. */
     node_t  new_peers[NETWORK_MAX_PEERS];
     uint8_t new_count = 0;
 
@@ -129,6 +136,8 @@ void network_update_peers_from_sync(uint16_t master_id,
             new_peers[new_count++] = *existing;
         } else {
             new_peers[new_count].id = master_id;
+            for (uint8_t j = 0; j < NETWORK_MAX_PEERS; j++)
+                new_peers[new_count].peers[j].k = 1.0;
             new_count++;
         }
     }
@@ -140,6 +149,8 @@ void network_update_peers_from_sync(uint16_t master_id,
             new_peers[new_count++] = *existing;
         } else {
             new_peers[new_count].id = peer_ids[i];
+            for (uint8_t j = 0; j < NETWORK_MAX_PEERS; j++)
+                new_peers[new_count].peers[j].k = 1.0;
             new_count++;
         }
     }
@@ -301,7 +312,7 @@ static node_peer_state_t *find_or_add_peer_slot(node_t *owner, uint16_t peer_id)
     return NULL;
 }
 
-static node_peer_state_t *get_peer_state(uint16_t owner_id, uint16_t peer_id)
+node_peer_state_t *network_get_peer_state(uint16_t owner_id, uint16_t peer_id)
 {
     node_t *owner = (owner_id == net.self.id) ? &net.self : find_peer(owner_id);
     if (!owner) return NULL;
@@ -318,21 +329,65 @@ void network_decay_certainty(void)
             else
                 net.peers[i].peers[j].certainty = 0;
         }
+    for (uint8_t j = 0; j < NETWORK_MAX_PEERS; j++) {
+        if (net.self.peers[j].peer_id == 0) continue;
+        if (net.self.peers[j].certainty >= 2)
+            net.self.peers[j].certainty -= 2;
+        else
+            net.self.peers[j].certainty = 0;
+    }
 }
 
 void network_update_certainty(uint16_t a, uint16_t b, bool ds_twr)
 {
-    node_peer_state_t *s = get_peer_state(a, b);
+    node_peer_state_t *s = network_get_peer_state(a, b);
     if (!s) return;
     uint8_t inc = ds_twr ? 3 : 1;
-    if (s->certainty + inc > 5) s->certainty = 5;
+    if (s->certainty + inc > 255) s->certainty = 255;
     else s->certainty += inc;
 }
 
-void   network_set_distance(uint16_t a, uint16_t b, double ticks) { node_peer_state_t *s = get_peer_state(a,b); if(s) s->distance_ticks = ticks; }
-double network_get_distance(uint16_t a, uint16_t b)               { node_peer_state_t *s = get_peer_state(a,b); return s ? s->distance_ticks : 0.0; }
-void    network_set_k          (uint16_t a, uint16_t b, double k)  { node_peer_state_t *s = get_peer_state(a,b); if(s) s->k = k; }
-double  network_get_k         (uint16_t a, uint16_t b)            { node_peer_state_t *s = get_peer_state(a,b); return s ? s->k : 1.0; }
-void    network_bump_certainty (uint16_t a, uint16_t b)           { node_peer_state_t *s = get_peer_state(a,b); if(s && s->certainty < 255) s->certainty++; }
-void    network_reset_certainty(uint16_t a, uint16_t b)           { node_peer_state_t *s = get_peer_state(a,b); if(s) s->certainty = 0; }
-uint8_t network_get_certainty  (uint16_t a, uint16_t b)           { node_peer_state_t *s = get_peer_state(a,b); return s ? s->certainty : 0; }
+void network_print_certainty(void)
+{
+    mprintf("[CERT] self=0x%04X peers=%u\n", net.self.id, net.count);
+
+    /* Self's peer slots — these are what network_get_highest_uncertainty() reads */
+    for (uint8_t j = 0; j < NETWORK_MAX_PEERS; j++) {
+        if (net.self.peers[j].peer_id == 0) continue;
+        mprintf("[CERT]   self->0x%04X  certainty=%u  dist=%.1f ticks\n",
+                net.self.peers[j].peer_id,
+                net.self.peers[j].certainty,
+                dist_scale_to_ticks(net.self.peers[j].distance_scaled));
+    }
+
+    /* Each peer's internal slots (decayed by network_decay_certainty) */
+    for (int i = 0; i < net.count; i++) {
+        for (uint8_t j = 0; j < NETWORK_MAX_PEERS; j++) {
+            if (net.peers[i].peers[j].peer_id == 0) continue;
+            mprintf("[CERT]   0x%04X->0x%04X  certainty=%u  dist=%.1f ticks\n",
+                    net.peers[i].id,
+                    net.peers[i].peers[j].peer_id,
+                    net.peers[i].peers[j].certainty,
+                    dist_scale_to_ticks(net.peers[i].peers[j].distance_scaled));
+        }
+    }
+}
+
+
+
+
+void network_set_distance(uint16_t a, uint16_t b, uint16_t dist_scaled) { 
+    node_peer_state_t *s = network_get_peer_state(a,b); 
+    if(s) s->distance_scaled = dist_scaled; 
+}
+
+uint16_t network_get_distance(uint16_t a, uint16_t b) { 
+    node_peer_state_t *s = network_get_peer_state(a,b); 
+    return s ? s->distance_scaled : 0xFFFF; 
+}
+
+void    network_set_k          (uint16_t a, uint16_t b, double k)  { node_peer_state_t *s = network_get_peer_state(a,b); if(s) s->k = k; }
+double  network_get_k         (uint16_t a, uint16_t b)            { node_peer_state_t *s = network_get_peer_state(a,b); return s ? s->k : 1.0; }
+void    network_bump_certainty (uint16_t a, uint16_t b)           { node_peer_state_t *s = network_get_peer_state(a,b); if(s && s->certainty < 255) s->certainty++; }
+void    network_reset_certainty(uint16_t a, uint16_t b)           { node_peer_state_t *s = network_get_peer_state(a,b); if(s) s->certainty = 0; }
+uint8_t network_get_certainty  (uint16_t a, uint16_t b)           { node_peer_state_t *s = network_get_peer_state(a,b); return s ? s->certainty : 0; }

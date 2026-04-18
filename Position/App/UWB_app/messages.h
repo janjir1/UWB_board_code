@@ -171,18 +171,29 @@ typedef struct {
 
 } msg_final_t;
 
+#define NETWORK_MAX_PAIRS ((NETWORK_MAX_PEERS * (NETWORK_MAX_PEERS - 1)) / 2) 
+
 /**
- * @brief Payload for @c MSG_TYPE_SHARE.
+ * SHARE broadcast payload.
  *
- * Broadcast by a node after completing a ranging exchange to share its
- * planned sleep duration, allowing other devices to synchronise their
- * wake schedules for the next cycle.
- *
- * All fields are transmitted on the wire.
+ * The node_ids[] array defines the canonical ordering A, B, C, D...
+ * Pair entries follow the upper-triangle order: (0,1),(0,2),(0,3),(1,2),(1,3),(2,3)
+ * i.e. for i in 0..node_count-1, for j in i+1..node_count-1 → pair index = i*(2n-i-1)/2 + (j-i-1)
+ * Both sides encode/decode using the same deterministic formula — no IDs needed per pair.
  */
 typedef struct {
-    uint8_t  seq_num;       /**< Sequence number. */
-    uint32_t sleep_time;    /**< Planned sleep duration in ms before the next cycle. */
+    uint8_t  seq_num;                        /**< Sequence number.                         */
+    uint32_t sleep_time;                     /**< Planned sleep duration in ms.             */
+    uint8_t  node_count;                     /**< Number of nodes in node_ids[].            */
+    uint16_t node_ids[NETWORK_MAX_PEERS];      /**< Canonical node order: A, B, C, D...      */
+
+    /* Per-node IMU (index matches node_ids[]) */
+    uint8_t  vel_vert [NETWORK_MAX_PEERS];     /**< Vertical velocity, offset-binary.         */
+    uint8_t  vel_horiz[NETWORK_MAX_PEERS];     /**< Horizontal speed, offset-binary.          */
+
+    /* Per-pair distances (upper-triangle order, no IDs stored) */
+    uint16_t distance_mm [NETWORK_MAX_PAIRS];  /**< Distance 0–200 m in ~3.05 mm/LSB.        */
+    uint8_t  accuracy    [NETWORK_MAX_PAIRS];  /**< Certainty score (0=unknown, 255=best).    */
 } msg_share_t;
 
 

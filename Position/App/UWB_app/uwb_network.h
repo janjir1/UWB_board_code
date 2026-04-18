@@ -16,7 +16,6 @@
 extern "C" {
 #endif
 
-
 /* -----------------------------------------------------------------------
  * Positioning and ranging types
  * ----------------------------------------------------------------------- */
@@ -72,7 +71,7 @@ typedef struct {
 
 typedef struct {
     uint16_t peer_id;        /**< Network ID of the peer (0 = slot unused). */
-    double distance_ticks;
+    uint16_t distance_scaled;
     double   k;              /**< Clock ratio  local/peer  (1.0 = uninitialised). */
     uint8_t  certainty;      
 } node_peer_state_t;
@@ -81,6 +80,8 @@ typedef struct {
     uint16_t id;          /**< Network ID. */
     float    pos[3];      /**< Position estimate [x, y, z] in metres.
                            *   Zero-initialised until first fix. */
+    uint8_t  imu_vel_vert;
+    uint8_t  imu_vel_horiz;
     node_peer_state_t peers[NETWORK_MAX_PEERS];
 } node_t;
 
@@ -107,6 +108,9 @@ typedef struct {
     measurements_t measurements;       /**< All measurements for the current exchange.
                                         *   Reset at the start of each round. */
 } network_t;
+
+
+node_t *find_peer(uint16_t id);
 
 /* -----------------------------------------------------------------------
  * Network API — initialisation
@@ -313,8 +317,10 @@ uint8_t network_get_expected_seq_num(void);
  * Per-peer ranging state (distance, k, certainty)
  * ----------------------------------------------------------------------- */
 
-void    network_set_distance   (uint16_t a, uint16_t b, double ticks);
-double  network_get_distance   (uint16_t a, uint16_t b);
+
+
+void    network_set_distance   (uint16_t a, uint16_t b, uint16_t dist_scaled);
+uint16_t  network_get_distance   (uint16_t a, uint16_t b);
 void    network_set_k          (uint16_t a, uint16_t b, double k);
 double  network_get_k          (uint16_t a, uint16_t b);
 void    network_bump_certainty (uint16_t a, uint16_t b);
@@ -322,7 +328,9 @@ void    network_reset_certainty(uint16_t a, uint16_t b);
 uint8_t network_get_certainty  (uint16_t a, uint16_t b);
 void network_decay_certainty(void);
 void network_update_certainty(uint16_t a, uint16_t b, bool ds_twr);
+void network_print_certainty(void);
 
+node_peer_state_t *network_get_peer_state(uint16_t owner_id, uint16_t peer_id);
 #ifdef __cplusplus
 }
 #endif

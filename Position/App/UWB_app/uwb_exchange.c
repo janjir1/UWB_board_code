@@ -18,8 +18,9 @@
 //TODO create function in driver to force trf off. When reception was successful the antenna currently
 // turns off only after timeout (or at the last time when dwm_rx is called, do not reinitiate)
 //TODO reinitiating the dwm3000 sucks try to use some integrated hw function - do only when extra time is available 
-
-
+//TODO after promoting to master, domote self when not recieving sync answer
+//TODO count tx failed and if too many, reset MCU
+//TODO accel is newer written to network_t on masters side before share - needs the float to 8_t coversion
 //TODO implement sleep
 //TODO when waiting for SHARE we can ho to idle_rc
 
@@ -246,7 +247,7 @@ uwb_sync_result_t uwb_sync()
         while (1) {
             osDelay(1);
             dwm_rx(&rx_frame, T_SYNC_RX_SET, true, first_rx);
-            first_rx = (rx_frame.type != DWM_RX_OK);;
+            first_rx = (rx_frame.type != DWM_RX_OK);
 
             switch (rx_frame.type) {
             case DWM_RX_OK: {
@@ -369,6 +370,7 @@ static bool uwb_wait_for_RESPONSE(uint16_t target_id,
             network_remove_peer(target_id);
             mprintf("ERROR: RESPONSE timeout — removed 0x%04X\r\n", target_id);
             return false;
+
         }
     }
 }
@@ -434,8 +436,13 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
             mprintf("ERROR: no peers — skipping TWR\r\n");
             return UWB_TWR_NOT_ENOUGH_DEVICES;
         }
-
+        network_print_certainty();    
         uint16_t target_id = network_get_highest_uncertainty();
+        if (target_id == 0) {
+            mprintf("ERROR: no valid target — skipping TWR\n");
+            return UWB_TWR_NOT_ENOUGH_DEVICES;
+        }
+        mprintf("[CERT] selected target=0x%04X\n", target_id);
 
         osDelay(2);
 
@@ -586,16 +593,126 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
 }
 
 /**
- * @brief Broadcast or receive the post-exchange SHARE frame.
+ * @brief Populate a msg_share_t from the current network state.
  *
- * The responder (#UWB_TWR_RECEIVED) broadcasts a SHARE frame carrying the
- * agreed sleep duration. All other roles wait and return the adjusted sleep
- * time (minus #T_EARLY_WKUP). Returns 0 on TX failure or RX timeout.
+ * Builds the canonical node list (self first, then peers in array order),
+ * reads each node's IMU velocity from their peer slot relative to self,
+ * and fills all pair distances + accuracy in upper-triangle order.
  *
- * @param etwr_result Result from the preceding uwb_extended_twr() call.
- * @param sleep_time  Sleep duration in ms to embed (responder only).
- * @return Adjusted sleep time on success, 0 on timeout or TX failure.
+ * @param[out] out     Share struct to populate.
+ * @param[in]  seq     Sequence number to embed.
+ * @param[in]  sleep   Planned sleep time in ms.
  */
+void uwb_build_share(msg_share_t *out, uint8_t seq, uint32_t sleep_time)
+{
+    memset(out, 0, sizeof(*out));
+    out->seq_num    = seq;
+    out->sleep_time = sleep_time;
+
+    /* ── Build canonical node list: self first, then peers ── */
+    uint8_t n = 0;
+    network_t *net = network_get_network();
+    out->node_ids[n++] = net->self.id;
+    for (uint8_t i = 0; i < net->count && n < NETWORK_MAX_PEERS; i++)
+        out->node_ids[n++] = net->peers[i].id;
+    out->node_count = n;
+
+    /* ── Per-node IMU velocities ── */
+    for (uint8_t i = 0; i < n; i++) {
+        uint16_t id = out->node_ids[i];
+        if (id == net->self.id) {
+            out->vel_vert[i]  = net->self.imu_vel_vert;
+            out->vel_horiz[i] = net->self.imu_vel_horiz;
+        } else {
+            node_t *peer = find_peer(id);
+            if (peer) {
+                out->vel_vert[i]  = peer->imu_vel_vert;
+                out->vel_horiz[i] = peer->imu_vel_horiz;
+            }
+        }
+    }
+
+    /* ── Per-pair distances + accuracy, upper-triangle order ── */
+    for (uint8_t i = 0; i < n; i++) {
+        for (uint8_t j = i + 1u; j < n; j++) {
+            uint8_t idx = (uint8_t)(i * (2u * n - i - 1u) / 2u + (j - i - 1u));
+            out->distance_mm[idx] = network_get_distance(out->node_ids[i], out->node_ids[j]);
+            out->accuracy[idx] = network_get_certainty(out->node_ids[i], out->node_ids[j]);
+        }
+    }
+}
+
+void uwb_read_share(const msg_share_t *in)
+{
+    uint8_t n = in->node_count;
+    if (n > NETWORK_MAX_PEERS) n = NETWORK_MAX_PEERS;
+
+    network_t *net = network_get_network();
+
+    /* Update ALL node IMU velocities including self */
+    for (uint8_t i = 0; i < n; i++) {
+        uint16_t id = in->node_ids[i];
+        if (id == net->self.id) {
+            net->self.imu_vel_vert  = in->vel_vert[i];
+            net->self.imu_vel_horiz = in->vel_horiz[i];
+        } else {
+            node_t *peer = find_peer(id);
+            if (!peer) continue;
+            peer->imu_vel_vert  = in->vel_vert[i];
+            peer->imu_vel_horiz = in->vel_horiz[i];
+        }
+    }
+
+    /* Update ALL pair distances and certainty */
+    for (uint8_t i = 0; i < n; i++) {
+        for (uint8_t j = i + 1u; j < n; j++) {
+            uint8_t idx = (uint8_t)(i * (2u * n - i - 1u) / 2u + (j - i - 1u));
+
+            if (in->distance_mm[idx] == 0xFFFFu) continue;
+
+            network_set_distance(in->node_ids[i], in->node_ids[j], in->distance_mm[idx]);
+            network_set_distance(in->node_ids[j], in->node_ids[i], in->distance_mm[idx]);
+
+            node_peer_state_t *s = network_get_peer_state(in->node_ids[i], in->node_ids[j]);
+            if (s) s->certainty = in->accuracy[idx];
+
+            node_peer_state_t *s_rev = network_get_peer_state(in->node_ids[j], in->node_ids[i]);
+            if (s_rev) s_rev->certainty = in->accuracy[idx];
+        }
+    }
+
+    /* ── Readback verification ── */
+    mprintf("[SHARE_RX] seq=%u nodes=%u\n", in->seq_num, n);
+
+    for (uint8_t i = 0; i < n; i++) {
+        uint16_t id = in->node_ids[i];
+        uint8_t vv, vh;
+        if (id == net->self.id) {
+            vv = net->self.imu_vel_vert;
+            vh = net->self.imu_vel_horiz;
+        } else {
+            node_t *peer = find_peer(id);
+            vv = peer ? peer->imu_vel_vert  : 0xFF;
+            vh = peer ? peer->imu_vel_horiz : 0xFF;
+        }
+        mprintf("[SHARE_RX]   node 0x%04X  vel_vert=%3u vel_horiz=%3u\n", id, vv, vh);
+    }
+
+    for (uint8_t i = 0; i < n; i++) {
+        for (uint8_t j = i + 1u; j < n; j++) {
+            uint8_t idx = (uint8_t)(i * (2u * n - i - 1u) / 2u + (j - i - 1u));
+            double stored = network_get_distance(in->node_ids[i], in->node_ids[j]);
+            uint8_t cert  = network_get_certainty(in->node_ids[i], in->node_ids[j]);
+            mprintf("[SHARE_RX]   pair 0x%04X-0x%04X  dist_raw=%5u stored=%.1f cert=%3u%s\n",
+                    in->node_ids[i], in->node_ids[j],
+                    in->distance_mm[idx],
+                    stored,
+                    cert,
+                    in->distance_mm[idx] == 0xFFFFu ? " (sentinel/skipped)" : "");
+        }
+    }
+}
+
 uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)
 {
     switch (etwr_result) {
@@ -603,14 +720,15 @@ uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)
     case UWB_TWR_RECEIVED:
     {
         osDelay(1);
+
+        msg_share_t share;
+        uwb_build_share(&share, network_get_expected_seq_num(), sleep_time);
+
         msg_t tx_msg = {
-            .type     = MSG_TYPE_SHARE,
-            .sender   = network_get_ownid(),
-            .receiver = ALL_ID,
-            .data.share = {
-                .seq_num    = network_get_expected_seq_num(),
-                .sleep_time = sleep_time,
-            },
+            .type       = MSG_TYPE_SHARE,
+            .sender     = network_get_ownid(),
+            .receiver   = ALL_ID,
+            .data.share = share,
         };
 
         dwm_tx_frame_t tx_frame = msg_encode(&tx_msg);
@@ -622,7 +740,8 @@ uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)
             }
         }
 
-        mprintf("[SHARE] sent sleep=%lu ms\r\n", sleep_time);
+        mprintf("[SHARE] sent sleep=%lu ms nodes=%u\r\n",
+                sleep_time, share.node_count);
         return sleep_time;
     }
 
@@ -639,8 +758,9 @@ uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)
     {
         dwm_rx_flush();
         dwm_rx_frame_t rx_frame = {0};
-        uint32_t t_start = osKernelGetTickCount();
-        bool first_rx = true;
+        uint32_t t_start  = osKernelGetTickCount();
+        bool     first_rx = true;
+
         while (1) {
             uint32_t elapsed = osKernelGetTickCount() - t_start;
             if (elapsed >= T_SHARE_RX_WAIT) {
@@ -649,7 +769,7 @@ uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)
             }
 
             dwm_rx(&rx_frame, T_SHARE_RX_WAIT - elapsed, true, first_rx);
-            first_rx = (rx_frame.type != DWM_RX_OK);;
+            first_rx = (rx_frame.type != DWM_RX_OK);
 
             switch (rx_frame.type) {
             case DWM_RX_OK: {
@@ -659,11 +779,17 @@ uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)
                 if (rx_msg.type == MSG_TYPE_SHARE) {
                     if (!seq_ok(rx_msg.data.share.seq_num, "SHARE"))
                         break;
+
+                    /* ── Apply broadcast data into network state ── */
+                    uwb_read_share(&rx_msg.data.share);
+
                     uint32_t adjusted = rx_msg.data.share.sleep_time - T_EARLY_WKUP;
-                    mprintf("[SHARE] received sleep=%lu ms\r\n", adjusted);
+                    mprintf("[SHARE] received sleep=%lu ms nodes=%u\r\n",
+                            adjusted, rx_msg.data.share.node_count);
                     return adjusted;
                 }
-                mprintf("ERROR: unexpected msg 0x%02X during SHARE wait\r\n", rx_msg.type);
+                mprintf("ERROR: unexpected msg 0x%02X during SHARE wait\r\n",
+                        rx_msg.type);
                 break;
             }
             case DWM_RX_ERR:
@@ -721,7 +847,7 @@ static bool uwb_send_sync_reply(const msg_t *sync_rx)
 }
 
 /**
- * @brief Build and broadcast a SYNC frame to all devices (ALL_ID).
+ * @brief Build and broadcast a SYNC frame to all devices (ALL_ID).osThreadFlagsWait
  *
  * Fills the peer list from the current network state via
  * network_fill_peer_ids(), which excludes own ID and inactive peers.
@@ -807,7 +933,7 @@ static bool uwb_send_FINAL(uint8_t seq_num, uint16_t target_id, msg_final_t *fin
 
     uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 2);
     float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
-    if (flags == 0x02)
+    if (!(flags & 0x80000000U) && (flags & 0x02))
         imu_get_results(&pitch_rad, &speed_horiz, &vel_z);
 
     final_msg->IMU_pitch_rad = pitch_rad;
@@ -967,13 +1093,15 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
                                           uint16_t responder_id,
                                           msg_passive_t *passive_msg)
 {
-    network_remove_peer(initiator_id);
-    network_remove_peer(responder_id);
-
-    int8_t my_idx = network_get_peer_index(network_get_ownid());
-    if (my_idx < 0) {
-        mprintf("ERROR: PASSIVE own ID not in peer list\r\n");
-        return UWB_TWR_TIMEOUT;
+    /* Compute own TX-order index without disturbing network state */
+    int8_t my_idx = 0;
+    uint8_t peer_count = 0;
+    const node_t *peers = network_get_peers(&peer_count);
+    for (uint8_t i = 0; i < peer_count; i++) {
+        if (peers[i].id == initiator_id) continue;
+        if (peers[i].id == responder_id) continue;
+        if (peers[i].id == network_get_ownid()) break;
+        my_idx++;
     }
 
     dwm_rx_flush();
@@ -990,7 +1118,7 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
         }
 
         dwm_rx(&rx_frame, wait_time - elapsed, true, first_rx);
-        first_rx = (rx_frame.type != DWM_RX_OK);;
+        first_rx = (rx_frame.type != DWM_RX_OK);
 
         switch (rx_frame.type) {
         case DWM_RX_OK: {
@@ -1009,7 +1137,6 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
                 passive_msg->entry_rssi_q8[idx] = rx_frame.rssi_q8;
                 passive_msg->entry_ids[idx]     = rx_msg.sender;
                 idx++;
-                //osDelay(2);
             }
             break;
         }
@@ -1026,7 +1153,7 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
 
     uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 2);
     float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
-    if (flags == 0x02)
+    if (!(flags & 0x80000000U) && (flags & 0x02))
         imu_get_results(&pitch_rad, &speed_horiz, &vel_z);
 
     passive_msg->IMU_pitch_rad = pitch_rad;

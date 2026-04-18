@@ -19,55 +19,66 @@
 timestamps_t timestamps;
 #define UWB_40BIT_MASK 0xFFFFFFFFFFULL
 
+static inline uint8_t vel_ms_to_u8(float vel_ms)
+{
+    float clamped = vel_ms < -VEL_SHARE_RANGE_MS ? -VEL_SHARE_RANGE_MS
+                  : vel_ms >  VEL_SHARE_RANGE_MS ?  VEL_SHARE_RANGE_MS
+                  : vel_ms;
+    return (uint8_t)((clamped + VEL_SHARE_RANGE_MS) / VEL_SHARE_MS_PER_LSB + 0.5f);
+}
+
+static inline float vel_u8_to_ms(uint8_t encoded)
+{
+    return encoded * VEL_SHARE_MS_PER_LSB - VEL_SHARE_RANGE_MS;
+}
+
 void populate_computation_structs(timestamps_t *ts) {
     if (!ts) return;
 
-    // Retrieve the global network state
     network_t *net = network_get_network();
-    if (!net) return; 
+    if (!net) return;
 
-    // Retrieve peers to find the initiator (always at index 0)
     uint8_t peer_count = 0;
     const node_t *peers = network_get_peers(&peer_count);
-    
-    // Safety check: Ensure we actually have an initiator in the peer list
-    if (!peers || peer_count == 0) return;
-    
-    uint16_t initiator_id = peers[0].id;
 
-    // Self is always the responder in the primary exchange
-    uint16_t responder_id = network_get_ownid(); 
-
-    // 0. Zero out the structure
     memset(ts, 0, sizeof(timestamps_t));
     const measurements_t *meas = &net->measurements;
 
+    if (!peers || peer_count == 0) return;
+
+    uint16_t initiator_id = peers[0].id;
+    uint16_t responder_id = network_get_ownid();
+
+    /* ── Read own IMU → encode to uint8_t → store into network state ── */
     uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 2);
     float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
-    if (flags == 0x02)
+    if (!(flags & 0x80000000U) && (flags & 0x02U))
         imu_get_results(&pitch_rad, &speed_horiz, &vel_z);
 
+    net->self.imu_vel_vert  = vel_ms_to_u8(vel_z);        /* float m/s → uint8_t */
+    net->self.imu_vel_horiz = vel_ms_to_u8(speed_horiz);  /* float m/s → uint8_t */
+
+    node_t *init_node = find_peer(initiator_id);
+    if (init_node) {
+        init_node->imu_vel_vert  = vel_ms_to_u8(meas->final.IMU_vel_vert);
+        init_node->imu_vel_horiz = vel_ms_to_u8(meas->final.IMU_vel_horiz);
+    }
+
     /* -----------------------------------------------------------------------
-    * 1. FIRST ORDER: Initiator (A) and Responder (Self/B)
-    * ----------------------------------------------------------------------- */
-
-    ts->first.initiator_id = initiator_id;
-    ts->first.responder_id = responder_id;
-
-    // A's velocity — embedded in FINAL message
-    ts->first.init_vel_horiz      = meas->final.IMU_vel_horiz;
+     * 1. FIRST ORDER: Initiator (A) and Responder (Self/B)
+     *    vel fields in timestamps_t are float — decode uint8_t from wire back
+     *    to float for computation, keep own IMU as raw float.
+     * ----------------------------------------------------------------------- */
+    ts->first.initiator_id        = initiator_id;
+    ts->first.responder_id        = responder_id;
+    ts->first.init_vel_horiz      = meas->final.IMU_vel_horiz;  /* already float from msg */
     ts->first.init_vel_vert       = meas->final.IMU_vel_vert;
-
-    // Self (B)'s velocity — local IMU
-    ts->first.responder_vel_horiz = speed_horiz;
+    ts->first.responder_vel_horiz = speed_horiz;                /* raw float, not re-encoded */
     ts->first.responder_vel_vert  = vel_z;
 
-    // Local hardware timestamps (Self is Responder: RX Poll, TX Resp, RX Final)
-    ts->first.twr.poll_rx  = meas->poll_rx;
-    ts->first.twr.resp_tx  = meas->resp_tx;
-    ts->first.twr.final_rx = meas->final_rx;
-
-    // Timestamps embedded in A's FINAL message
+    ts->first.twr.poll_rx         = meas->poll_rx;
+    ts->first.twr.resp_tx         = meas->resp_tx;
+    ts->first.twr.final_rx        = meas->final_rx;
     ts->first.twr.poll_tx         = meas->final.poll_tx_ts;
     ts->first.twr.resp_rx.ts      = meas->final.resp_rx_ts;
     ts->first.twr.resp_rx.rssi_q8 = meas->final.resp_rssi_q8;
@@ -75,14 +86,12 @@ void populate_computation_structs(timestamps_t *ts) {
 
 
     /* -----------------------------------------------------------------------
-    * 2. SECOND ORDER: one pair per passive toward A, one toward B
-    *    Both pairs share the same twr_observation (passive saw POLL + RESP)
-    * ----------------------------------------------------------------------- */
+     * 2. SECOND ORDER
+     * ----------------------------------------------------------------------- */
     uint8_t p_count = meas->passive_count;
     for (uint8_t i = 0; i < p_count; i++) {
         uint16_t passive_id = meas->passive_device_id[i];
 
-        // Shared observation: passive heard both A's POLL and B's RESP
         twr_observation_t shared_obs = {
             .poll_rx = {
                 .ts      = meas->passive[i].poll_rx_ts,
@@ -94,7 +103,6 @@ void populate_computation_structs(timestamps_t *ts) {
             },
         };
 
-        // A's RX of this passive's frame (embedded in FINAL payload)
         uwb_rx_meas_t a_rx_of_passive = {0};
         for (uint8_t k = 0; k < meas->final.entry_count; k++) {
             if (meas->final.entry_id[k] == passive_id) {
@@ -104,51 +112,66 @@ void populate_computation_structs(timestamps_t *ts) {
             }
         }
 
-        // --- A <-> Passive (e.g. A-C, A-D, A-E) ---
-        second_order_t *so_a       = &ts->second[ts->second_count++];
-        so_a->initiator_id         = initiator_id;
-        so_a->responder_id         = passive_id;
-        so_a->init_vel_horiz       = meas->final.IMU_vel_horiz;
-        so_a->init_vel_vert        = meas->final.IMU_vel_vert;
-        so_a->responder_vel_horiz  = meas->passive[i].IMU_vel_horiz;
-        so_a->responder_vel_vert   = meas->passive[i].IMU_vel_vert;
-        so_a->twr_observation      = shared_obs;          // passive saw POLL + RESP
-        so_a->twr.init_tx          = meas->final.poll_tx_ts;   // A sent POLL
-        so_a->twr.init_rx          = shared_obs.poll_rx;       // passive received POLL
-        so_a->twr.answer_tx        = meas->passive[i].passive_tx_ts;
-        so_a->twr.answer_rx        = a_rx_of_passive;          // A received PASSIVE (from FINAL)
+        /* Passive peer IMU: msg_passive_t carries float → encode to uint8_t for node_t */
+        node_t *passive_node = find_peer(passive_id);
+        if (passive_node) {
+            passive_node->imu_vel_vert  = vel_ms_to_u8(meas->passive[i].IMU_vel_vert);
+            passive_node->imu_vel_horiz = vel_ms_to_u8(meas->passive[i].IMU_vel_horiz);
+        }
 
-        // --- B <-> Passive (e.g. B-C, B-D, B-E) ---
-        second_order_t *so_b       = &ts->second[ts->second_count++];
-        so_b->initiator_id         = responder_id;             // Self = B
-        so_b->responder_id         = passive_id;
-        so_b->init_vel_horiz       = speed_horiz;
-        so_b->init_vel_vert        = vel_z; 
-        so_b->responder_vel_horiz  = meas->passive[i].IMU_vel_horiz;
-        so_b->responder_vel_vert   = meas->passive[i].IMU_vel_vert;
-        so_b->twr_observation      = shared_obs;          // same — passive saw POLL + RESP
-        so_b->twr.init_tx          = meas->resp_tx;            // B sent RESP
-        so_b->twr.init_rx          = shared_obs.resp_rx;       // passive received RESP
-        so_b->twr.answer_tx        = meas->passive[i].passive_tx_ts;
-        so_b->twr.answer_rx        = meas->passive_rx[i];      // Self (B) received PASSIVE
+        if ((int)ts->second_count + 2 > MAX_SECOND_ORDER) { 
+            mprintf("[ERR] populate: second_order overflow at passive %u\n", i);
+            break;
+        }
+
+        /* A <-> Passive */
+        second_order_t *so_a      = &ts->second[ts->second_count++];
+        so_a->initiator_id        = initiator_id;
+        so_a->responder_id        = passive_id;
+        so_a->init_vel_horiz      = meas->final.IMU_vel_horiz;        /* float from msg */
+        so_a->init_vel_vert       = meas->final.IMU_vel_vert;
+        so_a->responder_vel_horiz = meas->passive[i].IMU_vel_horiz;   /* float from msg */
+        so_a->responder_vel_vert  = meas->passive[i].IMU_vel_vert;
+        so_a->twr_observation     = shared_obs;
+        so_a->twr.init_tx         = meas->final.poll_tx_ts;
+        so_a->twr.init_rx         = shared_obs.poll_rx;
+        so_a->twr.answer_tx       = meas->passive[i].passive_tx_ts;
+        so_a->twr.answer_rx       = a_rx_of_passive;
+
+        /* B <-> Passive */
+        second_order_t *so_b      = &ts->second[ts->second_count++];
+        so_b->initiator_id        = responder_id;
+        so_b->responder_id        = passive_id;
+        so_b->init_vel_horiz      = speed_horiz;                       /* raw float */
+        so_b->init_vel_vert       = vel_z;
+        so_b->responder_vel_horiz = meas->passive[i].IMU_vel_horiz;   /* float from msg */
+        so_b->responder_vel_vert  = meas->passive[i].IMU_vel_vert;
+        so_b->twr_observation     = shared_obs;
+        so_b->twr.init_tx         = meas->resp_tx;
+        so_b->twr.init_rx         = shared_obs.resp_rx;
+        so_b->twr.answer_tx       = meas->passive[i].passive_tx_ts;
+        so_b->twr.answer_rx       = meas->passive_rx[i];
     }
 
     /* -----------------------------------------------------------------------
-     * 3. THIRD ORDER: Passive-to-Passive combinations
+     * 3. THIRD ORDER: Passive-to-Passive
      * ----------------------------------------------------------------------- */
-    
     for (uint8_t i = 0; i < p_count; i++) {
     for (uint8_t j = i + 1; j < p_count; j++) {
-        third_order_t *to = &ts->third[ts->third_count++];
 
-        to->initiator_id    = meas->passive_device_id[i];
-        to->responder_id    = meas->passive_device_id[j];
-        to->init_vel_horiz  = meas->passive[i].IMU_vel_horiz;
-        to->init_vel_vert   = meas->passive[i].IMU_vel_vert;
-        to->responder_vel_horiz = meas->passive[j].IMU_vel_horiz;
+        if (ts->third_count >= MAX_THIRD_ORDER) {
+            mprintf("[ERR] populate: third_order overflow at pair (%u,%u)\n", i, j);
+            break;
+        }
+
+        third_order_t *to       = &ts->third[ts->third_count++];
+        to->initiator_id        = meas->passive_device_id[i];
+        to->responder_id        = meas->passive_device_id[j];
+        to->init_vel_horiz      = meas->passive[i].IMU_vel_horiz;   /* float from msg */
+        to->init_vel_vert       = meas->passive[i].IMU_vel_vert;
+        to->responder_vel_horiz = meas->passive[j].IMU_vel_horiz;   /* float from msg */
         to->responder_vel_vert  = meas->passive[j].IMU_vel_vert;
 
-        // passive[j]'s RX of passive[i]'s frame
         uwb_rx_meas_t j_rx_of_i = {0};
         for (uint8_t k = 0; k < meas->passive[j].entry_count; k++) {
             if (meas->passive[j].entry_ids[k] == meas->passive_device_id[i]) {
@@ -158,7 +181,6 @@ void populate_computation_structs(timestamps_t *ts) {
             }
         }
 
-        // passive[i]'s RX of passive[j]'s frame  ← new, symmetric search
         uwb_rx_meas_t i_rx_of_j = {0};
         for (uint8_t k = 0; k < meas->passive[i].entry_count; k++) {
             if (meas->passive[i].entry_ids[k] == meas->passive_device_id[j]) {
@@ -168,18 +190,16 @@ void populate_computation_structs(timestamps_t *ts) {
             }
         }
 
-        // ✅ twr_observation: mutual passive observations
-        to->twr_observation.poll_rx = j_rx_of_i;   // [j] saw [i]'s PASSIVE
-        to->twr_observation.resp_rx = i_rx_of_j;   // [i] saw [j]'s PASSIVE
-
-        // SS-TWR
-        to->twr.init_tx   = meas->passive[i].passive_tx_ts;
-        to->twr.init_rx   = j_rx_of_i;                // [j] received [i]
-        to->twr.answer_tx = meas->passive[j].passive_tx_ts;
-        to->twr.answer_rx = i_rx_of_j;                // ✅ [i] received [j]
+        to->twr_observation.poll_rx = j_rx_of_i;
+        to->twr_observation.resp_rx = i_rx_of_j;
+        to->twr.init_tx             = meas->passive[i].passive_tx_ts;
+        to->twr.init_rx             = j_rx_of_i;
+        to->twr.answer_tx           = meas->passive[j].passive_tx_ts;
+        to->twr.answer_rx           = i_rx_of_j;
     }
     }
 }
+
 
 /* Since populate() always calls memset(ts, 0, ...) first,
  * any field still zero after populate() was never written. */
@@ -382,18 +402,12 @@ double calculate_first_order_distance_ticks(const first_order_t *f)
                 tof_ticks);
         return -1.0;
     }
-
+/*
     mprintf("[DIST1] A(%u)<->B(%u): %.1f ticks\n",
             f->initiator_id, f->responder_id, tof_ticks);
-
+*/
     return tof_ticks;
 }
-
-typedef struct {
-    double tof_ac_ticks;  /**< A <-> C ToF in ticks, -1.0 on error */
-    double tof_bc_ticks;  /**< B <-> C ToF in ticks, -1.0 on error */
-} second_order_result_t;
-
 
 
 second_order_result_t calculate_second_order_distances(
@@ -406,7 +420,7 @@ second_order_result_t calculate_second_order_distances(
     double               *k_A,
     double               *k_B)
 {
-    second_order_result_t result = { -1.0f, -1.0f };
+    second_order_result_t result = { -1.0, -1.0 };
     if (!so_a || !so_b || !first || !k_A || !k_B) return result;
 
     if (so_a->responder_id != so_b->responder_id) {
@@ -491,8 +505,8 @@ second_order_result_t calculate_second_order_distances(
             /* Fall back to geometric step-1 */
             double k_A_s1 = dt_A_ref / (double)dt_C;
             double k_B_s1 = dt_B_ref / (double)dt_C;
-            result.tof_ac_ticks = (float)(((double)T_round_AC - k_A_s1 * (double)T_reply_AC) / 2.0);
-            result.tof_bc_ticks = (float)(((double)T_round_BC - k_B_s1 * (double)T_reply_BC) / 2.0);
+            result.tof_ac_ticks = ((double)T_round_AC - k_A_s1 * (double)T_reply_AC) / 2.0;
+            result.tof_bc_ticks = ((double)T_round_BC - k_B_s1 * (double)T_reply_BC) / 2.0;
         }
         return result;
     }
@@ -527,7 +541,7 @@ second_order_result_t calculate_second_order_distances(
         }
     #undef K_SMOOTH_ALPHA
 
-    mprintf("[DIST2] A(%u)<->C(%u): %.1f ticks  B(%u)<->C(%u): %.1f ticks  (kA=%.6f kB=%.6f)\n",
+    /*mprintf("[DIST2] A(%u)<->C(%u): %.1f ticks  B(%u)<->C(%u): %.1f ticks  (kA=%.6f kB=%.6f)\n",
             so_a->initiator_id, so_a->responder_id, result.tof_ac_ticks,
             so_b->initiator_id, so_b->responder_id, result.tof_bc_ticks,
             *k_A, *k_B);
@@ -535,110 +549,146 @@ second_order_result_t calculate_second_order_distances(
     mprintf("[RAW] poll_tx=%u poll_rx=%u resp_tx=%u resp_rx=%u final_tx=%u final_rx=%u\n",
             (uint32_t)ft->poll_tx,      (uint32_t)ft->poll_rx.ts,
             (uint32_t)ft->resp_tx,      (uint32_t)ft->resp_rx.ts,
-            (uint32_t)ft->final_tx,     (uint32_t)ft->final_rx.ts);
+            (uint32_t)ft->final_tx,     (uint32_t)ft->final_rx.ts);*/
 
     return result;
 }
+
+
+uint16_t dist_ticks_to_scale(double ticks)
+{
+    if (ticks < 0.0 || ticks > DIST_SHARE_DIST_MAX_TICKS)
+        return 0xFFFF;
+    return (uint16_t)(ticks / DIST_SHARE_TICKS_PER_LSB + 0.5);
+}
+
+double dist_scale_to_ticks(uint16_t encoded)
+{
+    if (encoded == 0xFFFF) return -1.0;
+    return encoded * DIST_SHARE_TICKS_PER_LSB;
+}
+
 
 
 void distance_calculate(uwb_etwr_result_t result)
 {
     uint32_t t_start = osKernelGetTickCount();
 
-    network_decay_certainty();
-
     if (result == UWB_TWR_RECEIVED) {
-            
-            populate_computation_structs(&timestamps);
 
+        /* One decay per full DS-TWR round */
+        network_decay_certainty();
+        mprintf("---After decay -----");
+        network_print_certainty();
 
-            double first_order_distance = calculate_first_order_distance_ticks(&timestamps.first);
+        /* Build timestamp structures for this round */
+        populate_computation_structs(&timestamps);
 
-            network_set_distance(timestamps.first.initiator_id,
-                                timestamps.first.responder_id,
-                                first_order_distance);
-            network_set_distance(timestamps.first.responder_id,
-                                timestamps.first.initiator_id,
-                                first_order_distance);
+        /* First-order DS-TWR: A <-> B (A = initiator, B = self) */
+        double first_order_distance = calculate_first_order_distance_ticks(&timestamps.first);
+        mprintf("[CERT] self=0x%04X, initiator=0x%04X, responder=0x%04X\n", network_get_ownid(), timestamps.first.initiator_id, timestamps.first.responder_id);
 
-            network_update_certainty(timestamps.first.initiator_id, timestamps.first.responder_id, true);
+        uint16_t id_A = timestamps.first.initiator_id;
+        uint16_t id_B = timestamps.first.responder_id;  /* self */
 
-            mprintf("[TWR] 0x%04X<->0x%04X: %.3f m\n",
-                timestamps.first.initiator_id,
-                timestamps.first.responder_id,
+        /* Store A <-> B distance symmetrically */
+        network_set_distance(id_A, id_B, dist_ticks_to_scale(first_order_distance));
+        network_set_distance(id_B, id_A, dist_ticks_to_scale(first_order_distance));
+
+        /*
+         * DS-TWR certainty: +3 for the directly ranged pair A <-> B.
+         * This always runs, even with no passive nodes.
+         */
+        network_update_certainty(id_A, id_B, true);
+        network_update_certainty(id_B, id_A, true);
+
+        mprintf("---After DS-TWR -----");
+        network_print_certainty();
+
+        mprintf("[TWR] 0x%04X<->0x%04X: %.3f m\n",
+                id_A,
+                id_B,
                 first_order_distance * METERS_PER_TICK);
 
+        /* Second-order: A/B <-> C via passive(s) */
+        uint16_t processed_C[NETWORK_MAX_PEERS];
+        uint8_t  processed_count = 0;
 
-            uint16_t id_A = timestamps.first.initiator_id;
-            uint16_t id_B = timestamps.first.responder_id;
+        for (uint8_t i = 0; i < timestamps.second_count; i++) {
 
-            uint16_t processed_C[NETWORK_MAX_PEERS];
-            uint8_t  processed_count = 0;
+            second_order_t *cur = &timestamps.second[i];
 
-            for (uint8_t i = 0; i < timestamps.second_count; i++) {
-                second_order_t *cur = &timestamps.second[i];
+            /* C is always the responder; skip if this is not an A->C entry */
+            if (cur->initiator_id != id_A) continue;
+            uint16_t id_C = cur->responder_id;
 
-                /* C is always the responder; skip if this is not an A→C entry */
-                if (cur->initiator_id != id_A) continue;
-                uint16_t id_C = cur->responder_id;
-
-                /* Skip already processed */
-                bool already_done = false;
-                for (uint8_t p = 0; p < processed_count; p++)
-                    if (processed_C[p] == id_C) { already_done = true; break; }
-                if (already_done) continue;
-
-                /* Find the matching B→C entry */
-                second_order_t *entry_ac = cur;
-                second_order_t *entry_bc = NULL;
-                for (uint8_t j = 0; j < timestamps.second_count; j++) {
-                    if (timestamps.second[j].initiator_id == id_B &&
-                        timestamps.second[j].responder_id == id_C) {
-                        entry_bc = &timestamps.second[j];
-                        break;
-                    }
+            /* Skip already processed C */
+            bool already_done = false;
+            for (uint8_t p = 0; p < processed_count; p++) {
+                if (processed_C[p] == id_C) {
+                    already_done = true;
+                    break;
                 }
+            }
+            if (already_done) continue;
 
-                if (entry_bc == NULL) {
-                    mprintf("[ERR] second-order: no B->C entry for C=0x%04X\n", id_C);
-                    continue;
+            /* Find the matching B->C entry */
+            second_order_t *entry_ac = cur;
+            second_order_t *entry_bc = NULL;
+            for (uint8_t j = 0; j < timestamps.second_count; j++) {
+                if (timestamps.second[j].initiator_id == id_B &&
+                    timestamps.second[j].responder_id == id_C) {
+                    entry_bc = &timestamps.second[j];
+                    break;
                 }
+            }
 
-                double k_A = network_get_k(id_A, id_C);
-                double k_B = network_get_k(id_B, id_C);
-                double prev_ac = network_get_distance(id_A, id_C);
-                double prev_bc = network_get_distance(id_B, id_C);
+            if (entry_bc == NULL) {
+                mprintf("[ERR] second-order: no B->C entry for C=0x%04X\n", id_C);
+                continue;
+            }
 
-                second_order_result_t res = calculate_second_order_distances(
+            double k_A     = network_get_k(id_A, id_C);
+            double k_B     = network_get_k(id_B, id_C);
+            double prev_ac = dist_scale_to_ticks(network_get_distance(id_A, id_C));
+            double prev_bc = dist_scale_to_ticks(network_get_distance(id_B, id_C));
+
+            second_order_result_t res = calculate_second_order_distances(
                     entry_ac, entry_bc,
                     &timestamps.first,
                     first_order_distance,
                     prev_ac, prev_bc,
                     &k_A, &k_B);
 
-                network_set_distance(id_A, id_C, res.tof_ac_ticks);
-                network_set_distance(id_C, id_A, res.tof_ac_ticks);
-                network_set_distance(id_B, id_C, res.tof_bc_ticks);
-                network_set_distance(id_C, id_B, res.tof_bc_ticks);
-                
-                network_update_certainty(id_A, id_C, false);
-                network_update_certainty(id_B, id_C, false);
+            network_set_distance(id_A, id_C, dist_ticks_to_scale(res.tof_ac_ticks));
+            network_set_distance(id_C, id_A, dist_ticks_to_scale(res.tof_ac_ticks));
 
-                network_set_k(id_A, id_C, k_A);
-                network_set_k(id_B, id_C, k_B);
+            network_set_distance(id_B, id_C, dist_ticks_to_scale(res.tof_bc_ticks));
+            network_set_distance(id_C, id_B, dist_ticks_to_scale(res.tof_bc_ticks));
 
-                mprintf("[SUMMARY] 0x%04X<->0x%04X: %.3f m | 0x%04X<->0x%04X: %.3f m | 0x%04X<->0x%04X: %.3f m\n",
-                        id_A, id_B, first_order_distance * METERS_PER_TICK,
-                        id_A, id_C, res.tof_ac_ticks     * METERS_PER_TICK,
-                        id_B, id_C, res.tof_bc_ticks     * METERS_PER_TICK);
+            /*
+             * SS-TWR certainty: +1 for self <-> passive (C).
+             * id_A already received DS-TWR +3 above.
+             * Do NOT update id_A <-> id_C here — self has no direct
+             * measurement of that pair.
+             */
+            network_update_certainty(id_B, id_C, false);
+            network_update_certainty(id_C, id_B, false);
 
-                processed_C[processed_count++] = id_C;
-            }
+            mprintf("---After SS-TWR -----");
+            network_print_certainty();
+
+            /* Update k smoothing for this passive */
+            network_set_k(id_A, id_C, k_A);
+            network_set_k(id_B, id_C, k_B);
+
+            processed_C[processed_count++] = id_C;
         }
-    /* Pad to exactly 10ms from entry regardless of which path was taken */
+    }
+
+    /* Pad to exactly 10 ms from entry regardless of which path was taken */
     uint32_t elapsed = osKernelGetTickCount() - t_start;
     if (elapsed < 10U) osDelay(10U - elapsed);
-    
 }
 
 /*

@@ -29,13 +29,6 @@ extern "C" {
  * @{
  */
 
-/**
- * @brief Main ranging period (ms).
- *
- * Duration of one full SYNC → TWR → SHARE cycle. Both master and slave
- * sleep for approximately this long between cycles.
- */
-#define T_PERIOD    200U    /* ms */
 
 /**
  * @brief DW3xxx deep-sleep duration (ms).
