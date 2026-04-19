@@ -139,35 +139,10 @@ static bool seq_ok(uint8_t rx_seq, const char *tag)
 /**
  * @brief Perform one UWB synchronisation iteration.
  *
- * **Master behaviour:**
- * 1. Broadcasts a SYNC frame carrying the list of all known active peers.
- * 2. Listens for replies during a #T_SYNC_RX_ANSWER ms window.
- * 3. On the first valid reply, adds the sender as a new peer and returns
- *    #UWB_SYNC_MASTER. Only one new peer is acknowledged per call — the
- *    caller is expected to call this function repeatedly until all peers
- *    are acknowledged.
- * 4. On dual-master detection the higher ID wins; the loser demotes itself
- *    and returns #UWB_SYNC_NEW_SLAVE.
+ * Master broadcasts SYNC and listens for replies. Slaves listen for SYNC, 
+ * and reply if they are not in the master's peer list.
  *
- * **Slave behaviour:**
- * 1. Listens indefinitely for a SYNC broadcast.
- * 2. If own ID is already in the peer list the device returns
- *    #UWB_SYNC_SLAVE_ACKNOWLEDGED.
- * 3. If own ID is not in the list the device sends a join reply and
- *    returns #UWB_SYNC_SLAVE_PENDING.
- * 4. On #SYNC_TIMEOUT_MAX consecutive timeouts the device promotes itself
- *    to master and returns #UWB_SYNC_NEW_MASTER.
- *
- * @note The DWM3000 must be awake before calling this function.
- *
- * @retval UWB_SYNC_MASTER              Master SYNC sent, one peer acknowledged.
- * @retval UWB_SYNC_MASTER_NO_REPLY     Master SYNC sent, no replies received.
- * @retval UWB_SYNC_SLAVE_ACKNOWLEDGED  Own ID confirmed in master's peer list.
- * @retval UWB_SYNC_SLAVE_PENDING       Join reply sent, awaiting next cycle.
- * @retval UWB_SYNC_SLAVE_REPLY_FAILED  Join reply TX failed twice.
- * @retval UWB_SYNC_NEW_MASTER          No master heard — promoted self.
- * @retval UWB_SYNC_NEW_SLAVE           Yielded to a higher-ID master.
- * @retval UWB_SYNC_TX_FAILED           SYNC TX failed at hardware level.
+ * @return Outcome and role for the subsequent TWR phase.
  */
 uwb_sync_result_t uwb_sync()
 {
@@ -858,7 +833,7 @@ static bool uwb_send_sync_reply(const msg_t *sync_rx)
 }
 
 /**
- * @brief Build and broadcast a SYNC frame to all devices (ALL_ID).osThreadFlagsWait
+ * @brief Build and broadcast a SYNC frame to all devices (ALL_ID).
  *
  * Fills the peer list from the current network state via
  * network_fill_peer_ids(), which excludes own ID and inactive peers.
@@ -1039,7 +1014,7 @@ static uwb_etwr_result_t uwb_wait_for_PASSIVES(uint64_t entries[],
         }
 
         dwm_rx(&rx_frame, wait_time - elapsed, true, first_rx);
-        first_rx = (rx_frame.type != DWM_RX_OK);;
+        first_rx = (rx_frame.type != DWM_RX_OK);
 
         switch (rx_frame.type) {
         case DWM_RX_OK: {

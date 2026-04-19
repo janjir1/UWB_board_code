@@ -183,11 +183,25 @@ static void msg_decode_final(const dwm_rx_frame_t *frame, msg_final_t *out)
 
     memcpy(&out->resp_pwr_diff_q8, p, sizeof(int16_t)); p += sizeof(int16_t);
 
-    out->entry_count = *p++;
-    for (int i = 0; i < out->entry_count && i < (NETWORK_MAX_PEERS - 2); i++) {
-        memcpy(&out->entries[i],      p, MSG_TS_LEN);        p += MSG_TS_LEN;
-        memcpy(&out->entry_pwr_diff_q8[i], p, sizeof(int16_t)); p += sizeof(int16_t);
-        memcpy(&out->entry_id[i],      p, sizeof(uint16_t)); p += sizeof(uint16_t); // ← new
+    uint8_t wire_count = *p++;
+    uint8_t count = wire_count > (NETWORK_MAX_PEERS - 2) ? (NETWORK_MAX_PEERS - 2) : wire_count;
+    out->entry_count = count;
+
+    for (int i = 0; i < wire_count; i++) {
+        if (i < count) {
+            memcpy(&out->entries[i],      p, MSG_TS_LEN);
+        }
+        p += MSG_TS_LEN;
+
+        if (i < count) {
+            memcpy(&out->entry_pwr_diff_q8[i], p, sizeof(int16_t));
+        }
+        p += sizeof(int16_t);
+
+        if (i < count) {
+            memcpy(&out->entry_id[i],      p, sizeof(uint16_t));
+        }
+        p += sizeof(uint16_t);
     }
 
     memcpy(&out->IMU_pitch_rad, p, sizeof(float)); p += sizeof(float);
@@ -219,28 +233,44 @@ static void msg_decode_share(const dwm_rx_frame_t *frame, msg_share_t *out)
     out->seq_num = *p++;
     memcpy(&out->sleep_time, p, sizeof(uint32_t)); p += sizeof(uint32_t);
 
-    uint8_t n = *p++;
-    if (n > NETWORK_MAX_PEERS) n = NETWORK_MAX_PEERS;
+    uint8_t wire_n = *p++;
+    uint8_t n = wire_n > NETWORK_MAX_PEERS ? NETWORK_MAX_PEERS : wire_n;
     out->node_count = n;
 
-    for (uint8_t i = 0; i < n; i++) {
-        memcpy(&out->node_ids[i], p, sizeof(uint16_t)); p += sizeof(uint16_t);
+    for (uint8_t i = 0; i < wire_n; i++) {
+        if (i < n) {
+            memcpy(&out->node_ids[i], p, sizeof(uint16_t));
+        }
+        p += sizeof(uint16_t);
     }
 
-    for (uint8_t i = 0; i < n; i++) out->vel_vert[i]  = *p++;
-    for (uint8_t i = 0; i < n; i++) out->vel_horiz[i] = *p++;
+    for (uint8_t i = 0; i < wire_n; i++) {
+        if (i < n) out->vel_vert[i] = *p;
+        p++;
+    }
+    
+    for (uint8_t i = 0; i < wire_n; i++) {
+        if (i < n) out->vel_horiz[i] = *p;
+        p++;
+    }
 
-    for (uint8_t i = 0; i < n; i++) {
-        for (uint8_t j = i + 1u; j < n; j++) {
-            uint8_t idx = share_pair_index(i, j, n);
-            memcpy(&out->distance_mm[idx], p, sizeof(uint16_t)); p += sizeof(uint16_t);
+    for (uint8_t i = 0; i < wire_n; i++) {
+        for (uint8_t j = i + 1u; j < wire_n; j++) {
+            if (i < n && j < n) {
+                uint8_t idx = share_pair_index(i, j, n);
+                memcpy(&out->distance_mm[idx], p, sizeof(uint16_t));
+            }
+            p += sizeof(uint16_t);
         }
     }
 
-    for (uint8_t i = 0; i < n; i++) {
-        for (uint8_t j = i + 1u; j < n; j++) {
-            uint8_t idx = share_pair_index(i, j, n);
-            out->accuracy[idx] = *p++;
+    for (uint8_t i = 0; i < wire_n; i++) {
+        for (uint8_t j = i + 1u; j < wire_n; j++) {
+            if (i < n && j < n) {
+                uint8_t idx = share_pair_index(i, j, n);
+                out->accuracy[idx] = *p;
+            }
+            p++;
         }
     }
 }
@@ -377,11 +407,6 @@ static uint16_t msg_encode_final(const msg_final_t *in, uint8_t *buf)
 
 /**
  * @brief Encode a SHARE message payload into the wire buffer.
- *
- * Wire layout (little-endian):
- *   [SEQ 1B] [SLEEP 4B] [NODE_COUNT 1B]
- *   [NODE_IDS N×2B] [VEL_VERT N×1B] [VEL_HORIZ N×1B]
- *   [DISTANCES P×2B] [ACCURACY P×1B]   where P = N*(N-1)/2
  */
 static uint16_t msg_encode_share(const msg_share_t *in, uint8_t *buf)
 {

@@ -63,17 +63,15 @@ typedef struct {
  * @brief Identity and position state of one UWB network node.
  *
  * Used for both peers (@c network_t.peers) and self (@c network_t.self).
- * The @c uncertainty field drives DS-TWR target selection: the peer with
- * the highest value is chosen as the next ranging target.  Initialised to
- * 1.0 on first add and updated after each EKF step — typically the trace
- * of the position covariance matrix.
+ * The @c certainty field drives DS-TWR target selection: the peer with
+ * the lowest certainty is chosen as the next ranging target.
  */
 
 typedef struct {
     uint16_t peer_id;        /**< Network ID of the peer (0 = slot unused). */
     uint16_t distance_scaled;
     double   k;              /**< Clock ratio  local/peer  (1.0 = uninitialised). */
-    uint8_t  certainty;      
+    uint8_t  certainty;      /**< Certainty score for this peer's distance (0-255). */
 } node_peer_state_t;
 
 typedef struct {

@@ -48,7 +48,7 @@ void populate_computation_structs(timestamps_t *ts) {
 
     if (!peers || peer_count == 0) return;
 
-    uint16_t initiator_id = peers[0].id;
+    uint16_t initiator_id = network_get_master();
     uint16_t responder_id = network_get_ownid();
 
     /* ── Read own IMU → encode to uint8_t → store into network state ── */
@@ -578,7 +578,9 @@ uint16_t dist_ticks_to_scale(double ticks)
 {
     if (ticks < 0.0 || ticks > DIST_SHARE_DIST_MAX_TICKS)
         return 0xFFFF;
-    return (uint16_t)(ticks / DIST_SHARE_TICKS_PER_LSB + 0.5);
+    uint32_t val = (uint32_t)(ticks / DIST_SHARE_TICKS_PER_LSB + 0.5);
+    if (val >= 0xFFFF) return 0xFFFE;
+    return (uint16_t)val;
 }
 
 double dist_scale_to_ticks(uint16_t encoded)
