@@ -12,7 +12,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-
+#include <stdlib.h>
 #include "cmsis_os2.h"
 
 #include "../Generic/my_print.h"
@@ -192,7 +192,8 @@ void network_set_self_pos(const float pos[3])
 uint16_t network_get_highest_uncertainty(void)
 {
     uint16_t target_id = 0;
-    uint8_t  lowest    = 255;
+    uint16_t lowest    = 256; /* CHANGED: 256 strictly exceeds max certainty (255) */
+    uint8_t  tie_count = 0;   /* Tracks how many devices share the 'lowest' score */
 
     for (int i = 0; i < net.count; i++) {
         if (net.peers[i].id == net.self.id) continue;
@@ -204,14 +205,25 @@ uint16_t network_get_highest_uncertainty(void)
         for (uint8_t j = 0; j < NETWORK_MAX_PEERS; j++) {
             if (net.self.peers[j].peer_id != pid) continue;
             found = true;
-            if (net.self.peers[j].certainty < lowest) {
-                lowest    = net.self.peers[j].certainty;
+            
+            uint8_t cert = net.self.peers[j].certainty;
+
+            if (cert < lowest) {
+                /* New absolute lowest found: reset the reservoir */
+                lowest    = cert;
                 target_id = pid;
+                tie_count = 1;
+            } 
+            else if (cert == lowest) {
+                /* Tie detected: add to reservoir and swap with 1/N probability */
+                tie_count++;
+                if ((rand() % tie_count) == 0) {
+                    target_id = pid;
+                }
             }
             break;
         }
 
-        /* Never ranged with this peer — highest priority */
         if (!found) return pid;
     }
     return target_id;

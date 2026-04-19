@@ -26,11 +26,51 @@
 #define MPRINT_TS(label, val) \
     mprintf("UWB_eTWR_TEST - %-20s: 0x%08lX%08lX\r\n", (label), U64_HI(val), U64_LO(val))
 
+/**
+ * @brief Watchdog to catch hardware TX lockups and RTOS sleep underflows.
+ * * @param result_sync  The return value from uwb_sync()
+ * @param result_etwr  The return value from uwb_extended_twr()
+ * @param sleep_time   The requested sleep time from uwb_share()
+ * @return Safely clamped sleep time for osDelay()
+ */
+uint32_t tx_err_watchdog(uwb_sync_result_t result_sync, 
+                                     uwb_etwr_result_t result_etwr, 
+                                     uint32_t sleep_time)
+{
+    /* Static counter persists across loop iterations */
+    static uint8_t tx_fail_count = 0;
 
+    /* ------------------------------------------------------------------
+     * GUARD 1: DWM3000 Hardware TX Failure Watchdog
+     * ------------------------------------------------------------------ */
+    if (result_sync == UWB_SYNC_TX_FAILED || result_etwr == UWB_TWR_TX_FAILED || sleep_time > 5000) {
+        tx_fail_count++;
+        if (tx_fail_count >= 10) {  /* 10 consecutive TX failures */
+            mprintf("ERROR: Consecutive TX failures! Re-initializing DWM3000...\r\n");
+            mprintf("WARNING: Invalid sleep time %lu detected. Defaulting to DEEP_SLEEP.\r\n", sleep_time);
+       
+            bool passed = dwm_init();
+            passed &= dwm_configure();
+            
+            if (!passed) {
+                mprintf("ERROR: DWM3000 re-initialization failed!\r\n");
+            } else {
+                mprintf("SUCCESS: DWM3000 re-initialized.\r\n");
+            }
+            tx_fail_count = 0; /* Reset counter after recovery attempt */
+            return DEEP_SLEEP - 50;
+        }
+    } else {
+        /* If we succeed or fail for a normal RF reason (like TIMEOUT), reset the counter */
+        tx_fail_count = 0; 
+    }
+
+    return sleep_time;
+}
 
 void StartRangingTask(void *argument) {
     mprintf("Starting DWM3000 task\r\n");
-    bool passed = dwm_init();;
+    bool passed = dwm_init();
     if (passed) {
         mprintf("DWM3000 initialized successfully\r\n");
     } else {
@@ -82,21 +122,9 @@ void StartRangingTask(void *argument) {
         mprintf("Sync result: %d\r\n", result_sync);
         uwb_etwr_result_t result_etwr = uwb_extended_twr(result_sync);
         distance_calculate(result_etwr);
-        uint32_t sleep_time = uwb_share (result_etwr, DEEP_SLEEP); //TODO if output is 0 set to last times sleep_time
+        uint32_t sleep_time = uwb_share (result_etwr, DEEP_SLEEP); 
+        sleep_time = tx_err_watchdog(result_sync, result_etwr, sleep_time);
         HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
-        /*
-        if(timer++ > 10) {
-            timer = 0;
-            // Heap — most important, run periodically
-            mprintf("[DIAG] heap free=%u  min_ever=%u\r\n",
-                    xPortGetFreeHeapSize(),
-                    xPortGetMinimumEverFreeHeapSize());
-
-            // Stack watermark of the calling task
-            mprintf("[DIAG] stack HWM=%u words\r\n",
-                    uxTaskGetStackHighWaterMark(NULL));
-        }
-                    */
         osDelay(sleep_time);
     }
     

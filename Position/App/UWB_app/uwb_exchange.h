@@ -31,7 +31,7 @@ extern "C" {
 #define DEEP_SLEEP  200U
 
 /** @brief Slave RX window for the initial SYNC broadcast (ms). */
-#define T_SYNC_RX_SET       1000U
+#define T_SYNC_RX_SET       200U
 
 /** @brief Master RX window waiting for slave join replies after SYNC (ms). */
 #define T_SYNC_RX_ANSWER    10U
@@ -67,7 +67,7 @@ extern "C" {
 #define T_PASSIVE_TX_WAIT_MS    10U
 
 /** @brief Consecutive SYNC timeouts before a slave promotes itself to master. */
-#define SYNC_TIMEOUT_MAX        2U
+#define SYNC_TIMEOUT_MAX        5U
 
 /** @brief Broadcast destination address. */
 #define ALL_ID  0xFFFFU
