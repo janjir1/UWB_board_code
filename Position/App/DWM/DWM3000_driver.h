@@ -77,7 +77,8 @@ void dwm_rx_continuous_sleep(void);
 
 void dwm_wakeup(void);
 void dwm_sleep(void);
-
+int dwm_exit_idle_rc(void);
+int dwm_enter_idle_rc(void);
 #ifdef __cplusplus
 }
 #endif

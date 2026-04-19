@@ -568,6 +568,29 @@ void dwm_wakeup(void)
     dwm_restore_runtime(s_short_addr);
 }
 
+
+/**
+ * Enter IDLE_RC — low-power RC-clocked idle.
+ * SPI must be slowed BEFORE the PLL goes off.
+ */
+int dwm_enter_idle_rc(void)
+{
+    dwt_forcetrxoff();                  /* ensure clean state */
+    dw3000_spi_speed_slow();            /* max ~3 MHz while PLL is off */
+    return dwt_setdwstate(DWT_DW_IDLE_RC);  /* value = 2 */
+}
+
+/**
+ * Return to IDLE_PLL — full-speed PLL-clocked idle.
+ * dwt_setdwstate() handles PLL re-lock internally.
+ */
+int dwm_exit_idle_rc(void)
+{
+    int ret = dwt_setdwstate(DWT_DW_IDLE);  /* value = 1 → IDLE/IDLE_PLL */
+    dw3000_spi_speed_fast();          /* safe once PLL is back */
+    return ret;
+}
+
 #ifdef UWB_DEBUG
 // ─── Test: continuous TX/RX with sleep ───────────────────────────────────────────
 

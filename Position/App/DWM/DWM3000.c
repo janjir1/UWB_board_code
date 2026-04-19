@@ -116,6 +116,7 @@ void StartRangingTask(void *argument) {
     osThreadFlagsWait(0x01, osFlagsWaitAll, osWaitForever);
     //uint8_t timer = 0;
     while(1){
+        dwm_wakeup();
         mprintf("Starting sync\r\n");
         HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
         uwb_sync_result_t result_sync = uwb_sync();
@@ -125,6 +126,7 @@ void StartRangingTask(void *argument) {
         uint32_t sleep_time = uwb_share (result_etwr, DEEP_SLEEP); 
         sleep_time = tx_err_watchdog(result_sync, result_etwr, sleep_time);
         HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
+        dwm_sleep();
         osDelay(sleep_time);
     }
     
