@@ -331,33 +331,13 @@ node_peer_state_t *network_get_peer_state(uint16_t owner_id, uint16_t peer_id)
     return find_or_add_peer_slot(owner, peer_id);
 }
 
-void network_decay_certainty(void)
-{
-    for (int i = 0; i < net.count; i++)
-        for (uint8_t j = 0; j < NETWORK_MAX_PEERS; j++) {
-            if (net.peers[i].peers[j].peer_id == 0) continue;
-            if (net.peers[i].peers[j].certainty >= 2)
-                net.peers[i].peers[j].certainty -= 2;
-            else
-                net.peers[i].peers[j].certainty = 0;
-        }
-    for (uint8_t j = 0; j < NETWORK_MAX_PEERS; j++) {
-        if (net.self.peers[j].peer_id == 0) continue;
-        if (net.self.peers[j].certainty >= 2)
-            net.self.peers[j].certainty -= 2;
-        else
-            net.self.peers[j].certainty = 0;
-    }
-}
 
-void network_update_certainty(uint16_t a, uint16_t b, bool ds_twr)
+void network_update_certainty(uint16_t a, uint16_t b, uint8_t certainty)
 {
     node_peer_state_t *s = network_get_peer_state(a, b);
-    if (!s) return;
-    uint8_t inc = ds_twr ? 3 : 1;
-    if (s->certainty + inc > 255) s->certainty = 255;
-    else s->certainty += inc;
+    if (s) s->certainty = certainty;
 }
+
 
 void network_print_certainty(void)
 {

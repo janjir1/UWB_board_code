@@ -19,9 +19,84 @@ uint64_t position_calibrate_timestamp(uint64_t orig_timestamp);
 #define DIST_SHARE_MAX_M        200.0
 #define DIST_SHARE_DIST_MAX_TICKS    (DIST_SHARE_MAX_M / (SPEED_OF_LIGHT * DWT_TIME_UNITS))
 #define DIST_SHARE_TICKS_PER_LSB     (DIST_SHARE_DIST_MAX_TICKS / 65535.0)
-
+#define DWT_TICK_TO_US    (1.0f / 63897.6f)
 #define VEL_SHARE_RANGE_MS   4.0f                              /* 2g × 200ms */
 #define VEL_SHARE_MS_PER_LSB (2.0f * VEL_SHARE_RANGE_MS / 255.0f)  /* ~30.8 mm/s */
+
+
+/*
+ * CERTAINTY SYSTEM — UWB Position Measurement Quality Score
+ *
+ * Produces a uint8_t score [0..254] each measurement round (200 ms).
+ * Score is recomputed fresh every round — no accumulation.
+ *
+ * Score anchors:
+ *   0   — node not heard this round
+ *   127 — SS-TWR, average turnaround, average LOS  (the "neutral" node)
+ *   254 — DS-TWR, perfect LOS
+ */
+
+/* ------------------------------------------------------------------ */
+/* TUNING DEFINES — adjust these to calibrate your environment         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Base certainty scores per measurement method.
+ * These are the starting values BEFORE timing and LOS adjustments.
+ * Gap between methods must exceed the max combined adjustment range
+ * so that a better method always outranks a worse one.
+ *
+ *   DS-TWR  base: 224   (+30 LOS headroom  → 254 max)
+ *   SS-TWR  base: 127   (neutral midpoint  → 127 at average conditions)
+ *   TDOA    base:  60   (indirect geometry, lower ceiling)
+ */
+#define CERTAINTY_BASE_DSTWR     224
+#define CERTAINTY_BASE_SSTWR     127
+#define CERTAINTY_BASE_TDOA       60
+
+/*
+ * SS-TWR timing adjustment — linear, centered at CERTAINTY_TREF_US.
+ *
+ * CERTAINTY_TREF_US: turnaround time (µs) considered "average".
+ *   At this value timing offset = 0.
+ *   Faster → positive bonus (up to CERTAINTY_TIMING_MAX).
+ *   Slower → negative penalty (down to CERTAINTY_TIMING_MIN).
+ *
+ * CERTAINTY_KT: slope in offset-units per µs deviation.
+ *   Example: KT = 0.01 means 1000 µs off → ±10 points.
+ */
+#define CERTAINTY_TREF_US        1000.0f
+#define CERTAINTY_KT             0.015f
+#define CERTAINTY_TIMING_MAX      15
+#define CERTAINTY_TIMING_MIN     -30
+
+/*
+ * LOS adjustment — sqrt nonlinearity, centered at CERTAINTY_DELTA0_DB.
+ *
+ * CERTAINTY_DELTA0_DB: the RSSI-FP gap (dB) considered "average" LOS.
+ *   At this value LOS offset = 0.
+ *   Below → positive bonus (good LOS), up to CERTAINTY_LOS_MAX.
+ *   Above → penalty (NLOS), steep in first ~10 dB then flattening,
+ *            down to CERTAINTY_LOS_MIN.
+ *
+ * CERTAINTY_KN: controls steepness of the sqrt curve.
+ *   KN = 9.5 gives ~-30 penalty at 10 dB above average.
+ */
+#define CERTAINTY_DELTA0_Q8      1024
+#define CERTAINTY_KN_Q8          0.594f
+#define CERTAINTY_LOS_MAX         30
+#define CERTAINTY_LOS_MIN        -40
+
+/* ------------------------------------------------------------------ */
+/* TYPES                                                               */
+/* ------------------------------------------------------------------ */
+
+typedef enum {
+    MEAS_NONE       = 0,   /* No measurement received this round      */
+    MEAS_TDOA_SSTWR = 1,   /* TDOA aided by SS-TWR                    */
+    MEAS_SSTWR      = 2,   /* Single-sided two-way ranging            */
+    MEAS_DSTWR      = 3,   /* Double-sided two-way ranging (best)     */
+} MeasurementType;
 
 /*
  * @brief Timestamps captured during an active DS-TWR exchange.

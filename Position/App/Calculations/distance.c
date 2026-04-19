@@ -202,10 +202,9 @@ void populate_computation_structs(timestamps_t *ts) {
     }
 }
 
-
+#ifdef DEBUG_distance_populate
 /* Since populate() always calls memset(ts, 0, ...) first,
  * any field still zero after populate() was never written. */
-
 static bool check_uwb_rx_meas(const uwb_rx_meas_t *m, const char *name)
 {
     if (m->ts == 0) {
@@ -355,6 +354,7 @@ bool test_timestamps_populated(const timestamps_t *ts)
     mprintf("[TEST] ===== RESULT: %s =====\n", ok ? "PASS" : "FAIL");
     return ok;
 }
+#endif /* DEBUG_distance_populate */
 
 double calculate_first_order_distance_ticks(const first_order_t *f)
 {
@@ -589,18 +589,75 @@ double dist_scale_to_ticks(uint16_t encoded)
     return encoded * DIST_SHARE_TICKS_PER_LSB;
 }
 
+/* clamp a float to an integer range */
+static int16_t clampi(float v, int16_t lo, int16_t hi) {
+    if (v < (float)lo) return lo;
+    if (v > (float)hi) return hi;
+    return (int16_t)v;
+}
 
+/*
+ * timing_offset()
+ * Linear penalty/bonus based on SS-TWR turnaround time.
+ * Zero at T_ref, positive for faster, negative for slower.
+ */
+static int16_t timing_offset(float t_gap_us) {
+    float delta = -CERTAINTY_KT * (t_gap_us - CERTAINTY_TREF_US);
+    return clampi(delta, CERTAINTY_TIMING_MIN, CERTAINTY_TIMING_MAX);
+}
+
+/*
+ * los_offset()
+ * Square-root nonlinear penalty/bonus based on RSSI - FP power gap.
+ * Zero at DELTA0_DB, positive below (good LOS), negative above (NLOS).
+ * Steep in the first ~10 dB above average, flattens beyond that.
+ */
+static int16_t los_offset(int16_t pwr_diff_q8) {
+    int16_t diff_q8 = pwr_diff_q8 - CERTAINTY_DELTA0_Q8;
+    float   sign    = (diff_q8 >= 0) ? 1.0f : -1.0f;
+    float   delta   = -CERTAINTY_KN_Q8 * sign * sqrtf((float)abs(diff_q8));
+    return clampi(delta, CERTAINTY_LOS_MIN, CERTAINTY_LOS_MAX);
+}
+
+/* ------------------------------------------------------------------ */
+
+uint8_t compute_certainty(MeasurementType type,
+                          float           t_gap_us,
+                          int16_t         pwr_diff_q8) {
+    if (type == MEAS_NONE) return 0;
+
+    int16_t base, dt, dlos;
+
+    dlos = los_offset(pwr_diff_q8);
+
+    switch (type) {
+        case MEAS_DSTWR:
+            base = CERTAINTY_BASE_DSTWR;
+            dt   = 0;
+            break;
+        case MEAS_SSTWR:
+            base = CERTAINTY_BASE_SSTWR;
+            dt   = timing_offset(t_gap_us);
+            break;
+        case MEAS_TDOA_SSTWR:
+            base = CERTAINTY_BASE_TDOA;
+            dt   = timing_offset(t_gap_us);
+            break;
+        default:
+            return 0;
+    }
+
+    int16_t score = base + dt + dlos;
+    if (score < 1)   return 1;
+    if (score > 254) return 254;
+    return (uint8_t)score;
+}
 
 void distance_calculate(uwb_etwr_result_t result)
 {
     uint32_t t_start = osKernelGetTickCount();
 
     if (result == UWB_TWR_RECEIVED) {
-
-        /* One decay per full DS-TWR round */
-        network_decay_certainty();
-        mprintf("---After decay -----");
-        network_print_certainty();
 
         /* Build timestamp structures for this round */
         populate_computation_structs(&timestamps);
@@ -620,8 +677,11 @@ void distance_calculate(uwb_etwr_result_t result)
          * DS-TWR certainty: +3 for the directly ranged pair A <-> B.
          * This always runs, even with no passive nodes.
          */
-        network_update_certainty(id_A, id_B, true);
-        network_update_certainty(id_B, id_A, true);
+        uint16_t avg_pwr_diff_q8 = (timestamps.first.twr.poll_rx.pwr_diff_q8 + timestamps.first.twr.resp_rx.pwr_diff_q8 + 
+                                        timestamps.first.twr.final_rx.pwr_diff_q8) / 3;
+        uint8_t certainty_ab = compute_certainty(MEAS_DSTWR, 0, avg_pwr_diff_q8);
+        network_update_certainty(id_A, id_B, certainty_ab);
+        network_update_certainty(id_B, id_A, certainty_ab);
 
         mprintf("---After DS-TWR -----");
         network_print_certainty();
@@ -696,11 +756,17 @@ void distance_calculate(uwb_etwr_result_t result)
              * Do NOT update id_A <-> id_C here — self has no direct
              * measurement of that pair.
              */
-            network_update_certainty(id_B, id_C, false);
-            network_update_certainty(id_C, id_B, false);
+            uint16_t avg_pwr_diff_q8_bc = (entry_bc->twr.init_rx.pwr_diff_q8 + entry_bc->twr.answer_rx.pwr_diff_q8) / 2;
+            uint8_t certainty_bc = compute_certainty(MEAS_SSTWR, 
+                (float)(entry_bc->twr.answer_rx.ts - entry_bc->twr.init_tx) *DWT_TICK_TO_US, avg_pwr_diff_q8_bc);
+            network_update_certainty(id_B, id_C, certainty_bc);
+            network_update_certainty(id_C, id_B, certainty_bc);
 
-            network_update_certainty(id_A, id_C, false);
-            network_update_certainty(id_C, id_A, false);
+            uint16_t avg_pwr_diff_q8_ac = (entry_ac->twr.init_rx.pwr_diff_q8 + entry_ac->twr.answer_rx.pwr_diff_q8) / 2;
+            uint8_t certainty_ac = compute_certainty(MEAS_SSTWR, 
+                (float)(entry_ac->twr.answer_rx.ts - entry_ac->twr.init_tx) *DWT_TICK_TO_US, avg_pwr_diff_q8_ac);
+            network_update_certainty(id_A, id_C, certainty_ac);
+            network_update_certainty(id_C, id_A, certainty_ac);
 
             mprintf("---After SS-TWR -----");
             network_print_certainty();

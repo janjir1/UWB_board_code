@@ -324,8 +324,7 @@ double  network_get_k          (uint16_t a, uint16_t b);
 void    network_bump_certainty (uint16_t a, uint16_t b);
 void    network_reset_certainty(uint16_t a, uint16_t b);
 uint8_t network_get_certainty  (uint16_t a, uint16_t b);
-void network_decay_certainty(void);
-void network_update_certainty(uint16_t a, uint16_t b, bool ds_twr);
+void network_update_certainty(uint16_t a, uint16_t b, uint8_t certainty);
 void network_print_certainty(void);
 
 node_peer_state_t *network_get_peer_state(uint16_t owner_id, uint16_t peer_id);

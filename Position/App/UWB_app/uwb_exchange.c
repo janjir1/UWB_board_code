@@ -16,12 +16,9 @@
 #include "lsm6dsv.h"
 
 
-//TODO reinitiating the dwm3000 sucks try to use some integrated hw function - do only when extra time is available 
-
-//TODO accel is newer written to network_t on masters side before share - needs the float to 8_t coversion
+//TODO reinitiating the dwm3000 sucks try to use some integrated hw function - do only when extra time is available
 
 //TODO when waiting for SHARE we can ho to idle_rc
-
 /* -----------------------------------------------------------------------
  * Forward declarations
  * ----------------------------------------------------------------------- */
