@@ -17,21 +17,50 @@
 #include "lsm6dsv.h"
 
 timestamps_t timestamps;
-#define UWB_40BIT_MASK 0xFFFFFFFFFFULL
-//TODO encoding horiyontal velocity can lose the +/- sign and thus incerease the accuracy, as we stil dont know the direction
-//we cannot do it for vertical, as we know if its up or down.
 
-static inline uint8_t vel_ms_to_u8(float vel_ms)
+/*
+ * k_ema_update() — EMA smooth a clock-ratio estimate into *k.
+ *
+ * alpha: how much weight to give the NEW sample.
+ *   Higher alpha → faster adaptation, less smoothing.
+ *   Recommended values:
+ *     Second-order (direct SS-TWR):  0.20  — trusted, adapt quickly
+ *     Third-order  (TDOA derived):   0.05  — less trusted, smooth heavily
+ *
+ * Seeding rule: if *k is exactly 1.0 (uninitialised default),
+ * the first sample is taken directly without blending.
+ */
+static void k_ema_update(double *k, double k_new, double alpha)
 {
-    float clamped = vel_ms < -VEL_SHARE_RANGE_MS ? -VEL_SHARE_RANGE_MS
-                  : vel_ms >  VEL_SHARE_RANGE_MS ?  VEL_SHARE_RANGE_MS
-                  : vel_ms;
-    return (uint8_t)((clamped + VEL_SHARE_RANGE_MS) / VEL_SHARE_MS_PER_LSB + 0.5f);
+    if (*k == 1.0)
+        *k = k_new;                              /* first-call seed */
+    else
+        *k += alpha * (k_new - *k);              /* EMA: y += α*(x-y) */
 }
 
-static inline float vel_u8_to_ms(uint8_t encoded)
+static inline uint8_t vel_vert_to_u8(float v)
 {
-    return encoded * VEL_SHARE_MS_PER_LSB - VEL_SHARE_RANGE_MS;
+    float c = v < -VEL_VERT_RANGE_MS ? -VEL_VERT_RANGE_MS
+            : v >  VEL_VERT_RANGE_MS ?  VEL_VERT_RANGE_MS : v;
+    return (uint8_t)((c + VEL_VERT_RANGE_MS) / VEL_VERT_MS_PER_LSB + 0.5f);
+}
+
+static inline float vel_vert_u8_to_ms(uint8_t u)
+{
+    return u * VEL_VERT_MS_PER_LSB - VEL_VERT_RANGE_MS;
+}
+
+static inline uint8_t vel_horiz_to_u8(float v)
+{
+    /* take absolute value — direction not used */
+    float c = v < 0.0f ? -v : v;
+    if (c > VEL_HORIZ_MAX_MS) c = VEL_HORIZ_MAX_MS;
+    return (uint8_t)(c / VEL_HORIZ_MS_PER_LSB + 0.5f);
+}
+
+static inline float vel_horiz_u8_to_ms(uint8_t u)
+{
+    return u * VEL_HORIZ_MS_PER_LSB;   /* always positive */
 }
 
 void populate_computation_structs(timestamps_t *ts) {
@@ -57,13 +86,13 @@ void populate_computation_structs(timestamps_t *ts) {
     if (!(flags & 0x80000000U) && (flags & 0x02U))
         imu_get_results(&pitch_rad, &speed_horiz, &vel_z);
 
-    net->self.imu_vel_vert  = vel_ms_to_u8(vel_z);        /* float m/s → uint8_t */
-    net->self.imu_vel_horiz = vel_ms_to_u8(speed_horiz);  /* float m/s → uint8_t */
+    net->self.imu_vel_vert  = vel_vert_to_u8(vel_z);        /* float m/s → uint8_t */
+    net->self.imu_vel_horiz = vel_horiz_to_u8(speed_horiz);  /* float m/s → uint8_t */
 
     node_t *init_node = find_peer(initiator_id);
     if (init_node) {
-        init_node->imu_vel_vert  = vel_ms_to_u8(meas->final.IMU_vel_vert);
-        init_node->imu_vel_horiz = vel_ms_to_u8(meas->final.IMU_vel_horiz);
+        init_node->imu_vel_vert  = vel_vert_to_u8(meas->final.IMU_vel_vert);
+        init_node->imu_vel_horiz = vel_horiz_to_u8(meas->final.IMU_vel_horiz);
     }
 
     /* -----------------------------------------------------------------------
@@ -73,10 +102,6 @@ void populate_computation_structs(timestamps_t *ts) {
      * ----------------------------------------------------------------------- */
     ts->first.initiator_id        = initiator_id;
     ts->first.responder_id        = responder_id;
-    ts->first.init_vel_horiz      = meas->final.IMU_vel_horiz;  /* already float from msg */
-    ts->first.init_vel_vert       = meas->final.IMU_vel_vert;
-    ts->first.responder_vel_horiz = speed_horiz;                /* raw float, not re-encoded */
-    ts->first.responder_vel_vert  = vel_z;
 
     ts->first.twr.poll_rx         = meas->poll_rx;
     ts->first.twr.resp_tx         = meas->resp_tx;
@@ -117,8 +142,8 @@ void populate_computation_structs(timestamps_t *ts) {
         /* Passive peer IMU: msg_passive_t carries float → encode to uint8_t for node_t */
         node_t *passive_node = find_peer(passive_id);
         if (passive_node) {
-            passive_node->imu_vel_vert  = vel_ms_to_u8(meas->passive[i].IMU_vel_vert);
-            passive_node->imu_vel_horiz = vel_ms_to_u8(meas->passive[i].IMU_vel_horiz);
+            passive_node->imu_vel_vert  = vel_vert_to_u8(meas->passive[i].IMU_vel_vert);
+            passive_node->imu_vel_horiz = vel_horiz_to_u8(meas->passive[i].IMU_vel_horiz);
         }
 
         if ((int)ts->second_count + 2 > MAX_SECOND_ORDER) { 
@@ -130,10 +155,6 @@ void populate_computation_structs(timestamps_t *ts) {
         second_order_t *so_a      = &ts->second[ts->second_count++];
         so_a->initiator_id        = initiator_id;
         so_a->responder_id        = passive_id;
-        so_a->init_vel_horiz      = meas->final.IMU_vel_horiz;        /* float from msg */
-        so_a->init_vel_vert       = meas->final.IMU_vel_vert;
-        so_a->responder_vel_horiz = meas->passive[i].IMU_vel_horiz;   /* float from msg */
-        so_a->responder_vel_vert  = meas->passive[i].IMU_vel_vert;
         so_a->twr_observation     = shared_obs;
         so_a->twr.init_tx         = meas->final.poll_tx_ts;
         so_a->twr.init_rx         = shared_obs.poll_rx;
@@ -144,10 +165,6 @@ void populate_computation_structs(timestamps_t *ts) {
         second_order_t *so_b      = &ts->second[ts->second_count++];
         so_b->initiator_id        = responder_id;
         so_b->responder_id        = passive_id;
-        so_b->init_vel_horiz      = speed_horiz;                       /* raw float */
-        so_b->init_vel_vert       = vel_z;
-        so_b->responder_vel_horiz = meas->passive[i].IMU_vel_horiz;   /* float from msg */
-        so_b->responder_vel_vert  = meas->passive[i].IMU_vel_vert;
         so_b->twr_observation     = shared_obs;
         so_b->twr.init_tx         = meas->resp_tx;
         so_b->twr.init_rx         = shared_obs.resp_rx;
@@ -169,18 +186,19 @@ void populate_computation_structs(timestamps_t *ts) {
         third_order_t *to       = &ts->third[ts->third_count++];
         to->initiator_id        = meas->passive_device_id[i]; /* C */
         to->responder_id        = meas->passive_device_id[j]; /* D */
-        to->init_vel_horiz      = meas->passive[i].IMU_vel_horiz;
-        to->init_vel_vert       = meas->passive[i].IMU_vel_vert;
-        to->responder_vel_horiz = meas->passive[j].IMU_vel_horiz;
-        to->responder_vel_vert  = meas->passive[j].IMU_vel_vert;
 
-        /* twr_observation: C's observation of the A-B exchange (poll_rx) and
-        * D's observation of the A-B exchange (resp_rx).
-        * Reuses twr_observation_t.poll_rx for C and .resp_rx for D. */
-        to->twr_observation.poll_rx.ts           = meas->passive[i].poll_rx_ts;
-        to->twr_observation.poll_rx.pwr_diff_q8  = meas->passive[i].poll_pwr_diff_q8;
-        to->twr_observation.resp_rx.ts           = meas->passive[j].poll_rx_ts;
-        to->twr_observation.resp_rx.pwr_diff_q8  = meas->passive[j].poll_pwr_diff_q8;
+
+        /* C's perspective of the A-B exchange */
+        to->twr_observation_c.poll_rx.ts          = meas->passive[i].poll_rx_ts;
+        to->twr_observation_c.poll_rx.pwr_diff_q8 = meas->passive[i].poll_pwr_diff_q8;
+        to->twr_observation_c.resp_rx.ts          = meas->passive[i].resp_rx_ts;
+        to->twr_observation_c.resp_rx.pwr_diff_q8 = meas->passive[i].resp_pwr_diff_q8;
+
+        /* D's perspective of the A-B exchange */
+        to->twr_observation_d.poll_rx.ts          = meas->passive[j].poll_rx_ts;
+        to->twr_observation_d.poll_rx.pwr_diff_q8 = meas->passive[j].poll_pwr_diff_q8;
+        to->twr_observation_d.resp_rx.ts          = meas->passive[j].resp_rx_ts;
+        to->twr_observation_d.resp_rx.pwr_diff_q8 = meas->passive[j].resp_pwr_diff_q8;
 
         /* ss_twr_t: C transmits (init_tx), D receives (answer_rx).
         * init_rx = D's reception of C's passive TX (from D's entry list).
@@ -357,9 +375,11 @@ bool test_timestamps_populated(const timestamps_t *ts)
 }
 #endif /* DEBUG_distance_populate */
 
-double calculate_first_order_distance_ticks(const first_order_t *f)
+static void calculate_first_order_distance_ticks(first_order_t *f)
 {
-    if (!f) return -1.0;
+    if (!f) {
+        return;
+    }
 
     const twr_timestamps_t *t = &f->twr;
 
@@ -375,7 +395,8 @@ double calculate_first_order_distance_ticks(const first_order_t *f)
     /* 1. Zero-interval guard — unpopulated timestamps */
     if (T_round1 == 0 || T_reply1 == 0 || T_round2 == 0 || T_reply2 == 0) {
         mprintf("[ERR] first_order: zero interval — unpopulated timestamp\n");
-        return -1.0;
+        f->result_distance_tick = -1.0;
+        return;
     }
 
     /* 2. Same-domain constraint: both on the responder's clock */
@@ -383,7 +404,8 @@ double calculate_first_order_distance_ticks(const first_order_t *f)
     if (diff1 < -500) {
         mprintf("[ERR] first_order: T_reply1(%u) massively exceeds T_round1(%u)\n",
                 (uint32_t)T_reply1, (uint32_t)T_round1);
-        return -1.0;
+        f->result_distance_tick = -1.0;
+        return;
     } else if (diff1 < 0) {
         T_round1 = T_reply1; /* Clamp to 0 distance for this segment */
     }
@@ -391,7 +413,8 @@ double calculate_first_order_distance_ticks(const first_order_t *f)
     int64_t diff2 = (int64_t)T_round2 - (int64_t)T_reply2;
     if (diff2 < -500) {
         mprintf("[ERR] first_order: T_reply2 massively exceeds T_round2\n");
-        return -1.0;
+        f->result_distance_tick = -1.0;
+        return;
     } else if (diff2 < 0) {
         T_round2 = T_reply2; /* Clamp to 0 distance for this segment */
     }
@@ -405,7 +428,8 @@ double calculate_first_order_distance_ticks(const first_order_t *f)
     double den = dR1 + dR2 + dP1 + dP2;
     if (den == 0.0) {
         mprintf("[ERR] first_order: zero denominator\n");
-        return -1.0;
+        f->result_distance_tick = -1.0;
+        return;
     }
 
     double tof_ticks = (dR1 * dR2 - dP1 * dP2) / den;
@@ -414,47 +438,51 @@ double calculate_first_order_distance_ticks(const first_order_t *f)
     if (tof_ticks < -200.0) {
         mprintf("[ERR] first_order: tof=%.1f ticks — catastrophic cancellation, check final_tx latch\n",
                 tof_ticks);
-        return -1.0;
+        f->result_distance_tick = -1.0;
+        return;
     }
-/*
-    mprintf("[DIST1] A(%u)<->B(%u): %.1f ticks\n",
-            f->initiator_id, f->responder_id, tof_ticks);
-*/
-    return tof_ticks;
+
+    f->result_distance_tick = tof_ticks;
+    return;
 }
 
-
-second_order_result_t calculate_second_order_distances(
-    const second_order_t *so_a,
-    const second_order_t *so_b,
-    const first_order_t  *first,
-    double                tof_ab_ticks,
-    double                tof_ac_init,
-    double                tof_bc_init,
-    double               *k_A,
-    double               *k_B)
+static void calculate_second_order_distances(
+    second_order_t      *so_a,
+    second_order_t      *so_b,
+    const first_order_t *first,
+    double tof_ac_init, double tof_bc_init,
+    double *k_A, double *k_B)
 {
-    second_order_result_t result = { -1.0, -1.0 };
-    if (!so_a || !so_b || !first || !k_A || !k_B) return result;
+    so_a->result_distance_tick = -1.0;
+    so_b->result_distance_tick = -1.0;
+
+    if (!so_a || !so_b || !first || !k_A || !k_B) return;
 
     if (so_a->responder_id != so_b->responder_id) {
         mprintf("[ERR] second_order: passive ID mismatch (%u vs %u)\n",
                 so_a->responder_id, so_b->responder_id);
-        return result;
+        return;
     }
     if (so_a->initiator_id != first->initiator_id ||
         so_b->initiator_id != first->responder_id) {
         mprintf("[ERR] second_order: initiator IDs don't match first-order — entries swapped?\n");
-        return result;
+        return;
+    }
+
+    /* Read A-B ToF from the already-computed first-order result */
+    double tof_ab_ticks = first->result_distance_tick;
+    if (tof_ab_ticks < 0.0) {
+        mprintf("[ERR] second_order: first-order result not available\n");
+        return;
     }
 
     /* ── shared references ─────────────────────────────── */
     const twr_timestamps_t  *ft  = &first->twr;
-    const twr_observation_t *obs = &so_a->twr_observation;
+    const twr_observation_t *obs = &so_a->twr_observation;   /* shared C observation */
 
     /* ── passive C observation window ──────────────────── */
     uint64_t dt_C = (obs->resp_rx.ts - obs->poll_rx.ts) & UWB_40BIT_MASK;
-    if (dt_C == 0) { mprintf("[ERR] second_order: dt_C == 0\n"); return result; }
+    if (dt_C == 0) { mprintf("[ERR] second_order: dt_C == 0\n"); return; }
 
     /* ── SS-TWR intervals for A-C and B-C ──────────────── */
     uint64_t T_round_AC = (so_a->twr.answer_rx.ts - so_a->twr.init_tx)    & UWB_40BIT_MASK;
@@ -469,49 +497,57 @@ second_order_result_t calculate_second_order_distances(
 
     if (tof_ab_ticks > T_round1_A + 500.0) {
         mprintf("[ERR] second_order: tof_ab_ticks massively exceeds T_round1_A\n");
-        return result;
+        return;
     } else if (tof_ab_ticks >= T_round1_A) {
-        tof_ab_ticks = T_round1_A - 0.1; /* Clamp to keep dt_A_ref slightly positive */
+        tof_ab_ticks = T_round1_A - 0.1;
         dt_A_ref = 0.1;
     }
 
     if (dt_B_ref < -500.0) {
         mprintf("[ERR] second_order: massively negative dt_B_ref\n");
-        return result;
+        return;
     } else if (dt_B_ref <= 0.0) {
-        dt_B_ref = 0.1; /* Clamp to keep dt_B_ref slightly positive */
+        dt_B_ref = 0.1;
     }
 
     /* ═══════════════════════════════════════════════════
-     * STEP 1 — correction source
-     * Use prior estimates when available; fall back to
-     * the geometric approximation on the first cycle.
+     * STEP 1 — geometric estimate (always runs)
+     * If a prior is available, use it to seed dt_A_ref /
+     * dt_B_ref with a correction before the geometry pass,
+     * giving a better baseline on the first iteration.
      * ═══════════════════════════════════════════════════ */
     const bool have_prior = (tof_ac_init > 0.0 && tof_bc_init > 0.0);
-    double correction_s1;
 
-    if (have_prior) {
-        correction_s1 = tof_bc_init - tof_ac_init;
-        mprintf("[STEP1] A(%u)<->C(%u): %.1f ticks  B(%u)<->C(%u): %.1f ticks  (prior)\n",
-                so_a->initiator_id, so_a->responder_id, tof_ac_init,
-                so_b->initiator_id, so_b->responder_id, tof_bc_init);
-    } else {
-        double k_A_s1    = dt_A_ref / (double)dt_C;
-        double k_B_s1    = dt_B_ref / (double)dt_C;
-        double tof_ac_s1 = ((double)T_round_AC - k_A_s1 * (double)T_reply_AC) / 2.0;
-        double tof_bc_s1 = ((double)T_round_BC - k_B_s1 * (double)T_reply_BC) / 2.0;
+    /* Seed correction from prior if available, else zero */
+    double correction_s1 = have_prior ? (tof_bc_init - tof_ac_init) : 0.0;
 
-        mprintf("[STEP1] A(%u)<->C(%u): %.1f ticks  B(%u)<->C(%u): %.1f ticks  (geometric)\n",
-                so_a->initiator_id, so_a->responder_id, tof_ac_s1,
-                so_b->initiator_id, so_b->responder_id, tof_bc_s1);
+    /* Geometric pass using seeded correction */
+    double dt_A_ref_s1 = dt_A_ref + correction_s1;
+    double dt_B_ref_s1 = dt_B_ref + tof_ab_ticks + correction_s1;
 
-        if (tof_ac_s1 < -200.0 || tof_bc_s1 < -200.0) {
-            mprintf("[ERR] second_order: step1 ToF implausibly negative (ac=%.1f bc=%.1f)\n",
-                    tof_ac_s1, tof_bc_s1);
-            return result;
-        }
-        correction_s1 = tof_bc_s1 - tof_ac_s1;
+    /* Clamp to avoid division by zero / negative k */
+    if (dt_A_ref_s1 <= 0.0) dt_A_ref_s1 = 0.1;
+    if (dt_B_ref_s1 <= 0.0) dt_B_ref_s1 = 0.1;
+
+    double k_A_s1    = dt_A_ref_s1 / (double)dt_C;
+    double k_B_s1    = dt_B_ref_s1 / (double)dt_C;
+    double tof_ac_s1 = ((double)T_round_AC - k_A_s1 * (double)T_reply_AC) / 2.0;
+    double tof_bc_s1 = ((double)T_round_BC - k_B_s1 * (double)T_reply_BC) / 2.0;
+
+    mprintf("[STEP1] A(%u)<->C(%u): %.1f ticks  B(%u)<->C(%u): %.1f ticks  (%s)\n",
+            so_a->initiator_id, so_a->responder_id, tof_ac_s1,
+            so_b->initiator_id, so_b->responder_id, tof_bc_s1,
+            have_prior ? "prior-seeded" : "geometric");
+
+    if (tof_ac_s1 < -200.0 || tof_bc_s1 < -200.0) {
+        mprintf("[ERR] second_order: step1 ToF implausibly negative (ac=%.1f bc=%.1f)\n",
+                tof_ac_s1, tof_bc_s1);
+        return;
     }
+
+    /* Step-1 result becomes the correction for step-2 */
+    correction_s1 = tof_bc_s1 - tof_ac_s1;
+    
 
     /* ═══════════════════════════════════════════════════
      * STEP 2 — corrected k using best available correction
@@ -520,15 +556,12 @@ second_order_result_t calculate_second_order_distances(
     double dt_B_ref_corr = dt_B_ref + tof_ab_ticks + correction_s1;
 
     if (dt_A_ref_corr <= 0.0 || dt_B_ref_corr <= 0.0) {
-        mprintf("[WARN] second_order: corrected reference <= 0 — extreme geometry\n");
-        if (have_prior) {
-            /* Fall back to geometric step-1 */
-            double k_A_s1 = dt_A_ref / (double)dt_C;
-            double k_B_s1 = dt_B_ref / (double)dt_C;
-            result.tof_ac_ticks = ((double)T_round_AC - k_A_s1 * (double)T_reply_AC) / 2.0;
-            result.tof_bc_ticks = ((double)T_round_BC - k_B_s1 * (double)T_reply_BC) / 2.0;
-        }
-        return result;
+        mprintf("[WARN] second_order: corrected reference <= 0 — falling back to step-1 geometry\n");
+        double k_A_s1 = dt_A_ref / (double)dt_C;
+        double k_B_s1 = (dt_B_ref + tof_ab_ticks) / (double)dt_C;
+        so_a->result_distance_tick = ((double)T_round_AC - k_A_s1 * (double)T_reply_AC) / 2.0;
+        so_b->result_distance_tick = ((double)T_round_BC - k_B_s1 * (double)T_reply_BC) / 2.0;
+        return;
     }
 
     double k_A_new = dt_A_ref_corr / (double)dt_C;
@@ -539,49 +572,36 @@ second_order_result_t calculate_second_order_distances(
     if (drift_A > 500.0 || drift_B > 500.0) {
         mprintf("[ERR] second_order step2: kA=%.6f (%.1fppm) kB=%.6f (%.1fppm) implausible\n",
                 k_A_new, drift_A, k_B_new, drift_B);
-        return result;
+        return;
     }
     if (drift_A > 50.0) mprintf("[WARN] C(%u): k_A drift=%.1f ppm\n", so_a->responder_id, drift_A);
     if (drift_B > 50.0) mprintf("[WARN] C(%u): k_B drift=%.1f ppm\n", so_b->responder_id, drift_B);
 
-    result.tof_ac_ticks = (float)(((double)T_round_AC - k_A_new * (double)T_reply_AC) / 2.0);
-    result.tof_bc_ticks = (float)(((double)T_round_BC - k_B_new * (double)T_reply_BC) / 2.0);
+    so_a->result_distance_tick = ((double)T_round_AC - k_A_new * (double)T_reply_AC) / 2.0;
+    so_b->result_distance_tick = ((double)T_round_BC - k_B_new * (double)T_reply_BC) / 2.0;
 
-    /* ═══════════════════════════════════════════════════
-     * Smooth k values back to caller (EMA, α = 0.2).
-     * Seed directly on first call (*k_A == *k_B == 1.0).
-     * ═══════════════════════════════════════════════════ */
-    #define K_SMOOTH_ALPHA 0.2
-        if (*k_A == 1.0 && *k_B == 1.0) {
-            *k_A = k_A_new;
-            *k_B = k_B_new;
-        } else {
-            *k_A = (1.0 - K_SMOOTH_ALPHA) * (*k_A) + K_SMOOTH_ALPHA * k_A_new;
-            *k_B = (1.0 - K_SMOOTH_ALPHA) * (*k_B) + K_SMOOTH_ALPHA * k_B_new;
-        }
-    #undef K_SMOOTH_ALPHA
+    mprintf("[DIST2] A(%u)<->C(%u): %.1f ticks  B(%u)<->C(%u): %.1f ticks  kA=%.6f kB=%.6f\n",
+            so_a->initiator_id, so_a->responder_id, so_a->result_distance_tick,
+            so_b->initiator_id, so_b->responder_id, so_b->result_distance_tick,
+            k_A_new, k_B_new);
 
-    /*mprintf("[DIST2] A(%u)<->C(%u): %.1f ticks  B(%u)<->C(%u): %.1f ticks  (kA=%.6f kB=%.6f)\n",
-            so_a->initiator_id, so_a->responder_id, result.tof_ac_ticks,
-            so_b->initiator_id, so_b->responder_id, result.tof_bc_ticks,
-            *k_A, *k_B);
-
-    mprintf("[RAW] poll_tx=%u poll_rx=%u resp_tx=%u resp_rx=%u final_tx=%u final_rx=%u\n",
-            (uint32_t)ft->poll_tx,      (uint32_t)ft->poll_rx.ts,
-            (uint32_t)ft->resp_tx,      (uint32_t)ft->resp_rx.ts,
-            (uint32_t)ft->final_tx,     (uint32_t)ft->final_rx.ts);*/
-
-    return result;
+    k_ema_update(k_A, k_A_new, 0.20);
+    k_ema_update(k_B, k_B_new, 0.20);
 }
 
 
-double calculate_third_order_distance(
-    const third_order_t *to, const first_order_t *first,
+static void calculate_third_order_distance(
+    third_order_t *to, const first_order_t *first,
     double tof_ac_ticks, double tof_bc_ticks,
     double tof_ad_ticks, double tof_bd_ticks,
-    double k_ac, double k_bc, double k_ad, double k_bd)
+    double *k_ac, double *k_bc, double *k_ad, double *k_bd)
 {
-    if (!to || !first) return -1.0;
+    if (!to || !first) return;
+
+    to->result_distance_tick = -1.0;  /* default until successfully computed */
+
+    const twr_observation_t *obs_c = &to->twr_observation_c;
+    const twr_observation_t *obs_d = &to->twr_observation_d;
 
     if (tof_ac_ticks <= 0.0 || tof_bc_ticks <= 0.0 ||
         tof_ad_ticks <= 0.0 || tof_bd_ticks <= 0.0) {
@@ -589,41 +609,33 @@ double calculate_third_order_distance(
                 "AC=%.1f BC=%.1f AD=%.1f BD=%.1f\n",
                 to->initiator_id, to->responder_id,
                 tof_ac_ticks, tof_bc_ticks, tof_ad_ticks, tof_bd_ticks);
-        return -1.0;
+        return;
     }
 
-    if (k_ac == 1.0 || k_ad == 1.0 || k_bc == 1.0 || k_bd == 1.0) {
+    if (*k_ac == 1.0 || *k_ad == 1.0 || *k_bc == 1.0 || *k_bd == 1.0) {
         mprintf("[WARN] third-order %04X<->%04X: k not yet estimated\n",
                 to->initiator_id, to->responder_id);
-        return -1.0;
+        return;
     }
 
-    if (to->twr.answer_rx.ts == 0) {          /* was: to->d_rx_c.ts */
+    if (to->twr.answer_rx.ts == 0) {
         mprintf("[ERR] third-order %04X<->%04X: D_rx_C timestamp missing\n",
                 to->initiator_id, to->responder_id);
-        return -1.0;
+        return;
     }
 
     const uint64_t poll_tx = first->twr.poll_tx;
     const uint64_t resp_tx = first->twr.resp_tx;
 
-    /* ── Estimate 1: anchor via A (POLL epoch) ── */
-    double c_offset_A = (double)((to->twr.init_tx - to->twr_observation.poll_rx.ts)
-                                 & UWB_40BIT_MASK) / k_ac;
-    double d_offset_A = (double)((to->twr.answer_rx.ts - to->twr_observation.poll_rx.ts)
-                                 & UWB_40BIT_MASK) / k_ad;
+    double c_off_A  = (double)((to->twr.init_tx      - obs_c->poll_rx.ts) & UWB_40BIT_MASK) / *k_ac;
+    double d_off_A  = (double)((to->twr.answer_rx.ts  - obs_d->poll_rx.ts) & UWB_40BIT_MASK) / *k_ad;
+    double tof_cd_A = ((double)poll_tx + tof_ad_ticks + d_off_A)
+                    - ((double)poll_tx + tof_ac_ticks + c_off_A);
 
-    double tof_cd_A = ((double)poll_tx + tof_ad_ticks + d_offset_A)
-                    - ((double)poll_tx + tof_ac_ticks + c_offset_A);
-
-    /* ── Estimate 2: anchor via B (RESPONSE epoch) ── */
-    double c_offset_B = (double)((to->twr.init_tx - to->twr_observation.resp_rx.ts)
-                                 & UWB_40BIT_MASK) / k_bc;
-    double d_offset_B = (double)((to->twr.answer_rx.ts - to->twr_observation.resp_rx.ts)
-                                 & UWB_40BIT_MASK) / k_bd;
-
-    double tof_cd_B = ((double)resp_tx + tof_bd_ticks + d_offset_B)
-                    - ((double)resp_tx + tof_bc_ticks + c_offset_B);
+    double c_off_B  = (double)((to->twr.init_tx      - obs_c->resp_rx.ts) & UWB_40BIT_MASK) / *k_bc;
+    double d_off_B  = (double)((to->twr.answer_rx.ts  - obs_d->resp_rx.ts) & UWB_40BIT_MASK) / *k_bd;
+    double tof_cd_B = ((double)resp_tx + tof_bd_ticks + d_off_B)
+                    - ((double)resp_tx + tof_bc_ticks + c_off_B);
 
     bool valid_A = (tof_cd_A >= -200.0);
     bool valid_B = (tof_cd_B >= -200.0);
@@ -631,45 +643,43 @@ double calculate_third_order_distance(
     if (!valid_A && !valid_B) {
         mprintf("[ERR] third-order %04X<->%04X: both estimates failed A=%.1f B=%.1f\n",
                 to->initiator_id, to->responder_id, tof_cd_A, tof_cd_B);
-        return -1.0;
+        return;
     }
 
     #define PDIFF_MAX_DB 40.0
-    /* pwr_diff from C and D's observations of the exchange */
-    double diff_C_A = (double)to->twr_observation.poll_rx.pwr_diff_q8 / 256.0;
-    double diff_C_B = (double)to->twr_observation.resp_rx.pwr_diff_q8 / 256.0;
-    double diff_D_A = diff_C_A;   /* only one twr_observation — best available */
-    double diff_D_B = diff_C_B;
+    double diff_c_poll = (double)obs_c->poll_rx.pwr_diff_q8 / 256.0;
+    double diff_d_poll = (double)obs_d->poll_rx.pwr_diff_q8 / 256.0;
+    double diff_c_resp = (double)obs_c->resp_rx.pwr_diff_q8 / 256.0;
+    double diff_d_resp = (double)obs_d->resp_rx.pwr_diff_q8 / 256.0;
 
-    if (diff_C_A < 0.0) diff_C_A = 0.0;
-    if (diff_C_B < 0.0) diff_C_B = 0.0;
-    if (diff_D_A < 0.0) diff_D_A = 0.0;
-    if (diff_D_B < 0.0) diff_D_B = 0.0;
-    if (diff_C_A > PDIFF_MAX_DB) diff_C_A = PDIFF_MAX_DB;
-    if (diff_C_B > PDIFF_MAX_DB) diff_C_B = PDIFF_MAX_DB;
-    if (diff_D_A > PDIFF_MAX_DB) diff_D_A = PDIFF_MAX_DB;
-    if (diff_D_B > PDIFF_MAX_DB) diff_D_B = PDIFF_MAX_DB;
+    if (diff_c_poll < 0.0) diff_c_poll = 0.0;
+    if (diff_d_poll < 0.0) diff_d_poll = 0.0;
+    if (diff_c_resp < 0.0) diff_c_resp = 0.0;
+    if (diff_d_resp < 0.0) diff_d_resp = 0.0;
+    if (diff_c_poll > PDIFF_MAX_DB) diff_c_poll = PDIFF_MAX_DB;
+    if (diff_d_poll > PDIFF_MAX_DB) diff_d_poll = PDIFF_MAX_DB;
+    if (diff_c_resp > PDIFF_MAX_DB) diff_c_resp = PDIFF_MAX_DB;
+    if (diff_d_resp > PDIFF_MAX_DB) diff_d_resp = PDIFF_MAX_DB;
+    #undef PDIFF_MAX_DB
 
     double w_A = 0.0, w_B = 0.0;
     if (valid_A) {
-        double wC_A = 1.0 / (1.0 + diff_C_A);
-        double wD_A = 1.0 / (1.0 + diff_D_A);
+        double wC_A = 1.0 / (1.0 + diff_c_poll);
+        double wD_A = 1.0 / (1.0 + diff_d_poll);
         w_A = (wC_A < wD_A) ? wC_A : wD_A;
     }
     if (valid_B) {
-        double wC_B = 1.0 / (1.0 + diff_C_B);
-        double wD_B = 1.0 / (1.0 + diff_D_B);
+        double wC_B = 1.0 / (1.0 + diff_c_resp);
+        double wD_B = 1.0 / (1.0 + diff_d_resp);
         w_B = (wC_B < wD_B) ? wC_B : wD_B;
     }
-    #undef PDIFF_MAX_DB
 
     double tof_cd;
     double w_sum = w_A + w_B;
-    if (w_sum > 0.0) {
+    if (w_sum > 0.0)
         tof_cd = (tof_cd_A * w_A + tof_cd_B * w_B) / w_sum;
-    } else {
+    else
         tof_cd = valid_A ? tof_cd_A : tof_cd_B;
-    }
 
     mprintf("[DIST3] %04X<->%04X: A=%.1f (w=%.3f) B=%.1f (w=%.3f) -> %.1f tks (%.3f m)\n",
             to->initiator_id, to->responder_id,
@@ -677,7 +687,30 @@ double calculate_third_order_distance(
             tof_cd, (float)(tof_cd * METERS_PER_TICK));
 
     if (tof_cd < 0.0) tof_cd = 0.0;
-    return tof_cd;
+
+    to->result_distance_tick = tof_cd;
+
+    if (to->result_distance_tick >= 0.0) {
+        uint64_t dt_obs = (obs_c->resp_rx.ts - obs_c->poll_rx.ts) & UWB_40BIT_MASK;
+        uint64_t T_round_CD = (to->twr.answer_rx.ts - to->twr.init_tx) & UWB_40BIT_MASK;
+        uint64_t T_reply_CD = (to->twr.answer_tx    - to->twr.init_tx) & UWB_40BIT_MASK;
+
+        if (dt_obs > 0 && T_reply_CD > 0) {
+            double k_cd_new = (double)(T_round_CD - (uint64_t)(2.0 * to->result_distance_tick))
+                            / (double)T_reply_CD;
+            double drift = fabs(k_cd_new - 1.0) * 1e6;
+            if (drift < 500.0) {
+                /* α = 0.05 — third-order is TDOA-derived, smooth aggressively */
+                k_ema_update(k_ac, k_cd_new, 0.05);
+                k_ema_update(k_bc, k_cd_new, 0.05);
+                mprintf("[K3] %04X<->%04X: k_cd=%.6f (%.1f ppm) α=0.05\n",
+                        to->initiator_id, to->responder_id, k_cd_new, drift);
+            } else {
+                mprintf("[WARN] K3 %04X<->%04X: k_cd=%.6f (%.1f ppm) implausible, skipped\n",
+                        to->initiator_id, to->responder_id, k_cd_new, drift);
+            }
+        }
+    }
 }
 
 
@@ -769,170 +802,133 @@ void distance_calculate(uwb_etwr_result_t result)
         /* Build timestamp structures for this round */
         populate_computation_structs(&timestamps);
 
-        /* First-order DS-TWR: A <-> B (A = initiator, B = self) */
-        double first_order_distance = calculate_first_order_distance_ticks(&timestamps.first);
-        mprintf("[CERT] self=0x%04X, initiator=0x%04X, responder=0x%04X\n", network_get_ownid(), timestamps.first.initiator_id, timestamps.first.responder_id);
+        /* ── 1. First order ───────────────────────────────────────────── */
+
+        calculate_first_order_distance_ticks(&timestamps.first);
 
         uint16_t id_A = timestamps.first.initiator_id;
-        uint16_t id_B = timestamps.first.responder_id;  /* self */
+        uint16_t id_B = timestamps.first.responder_id;
+        double   tof_ab = timestamps.first.result_distance_tick;
 
-        /* Store A <-> B distance symmetrically */
-        network_set_distance(id_A, id_B, dist_ticks_to_scale(first_order_distance));
-        network_set_distance(id_B, id_A, dist_ticks_to_scale(first_order_distance));
+        network_set_distance(id_A, id_B, dist_ticks_to_scale(tof_ab));
+        network_set_distance(id_B, id_A, dist_ticks_to_scale(tof_ab));
 
-        /*
-         * DS-TWR certainty: +3 for the directly ranged pair A <-> B.
-         * This always runs, even with no passive nodes.
-         */
-        int16_t avg_pwr_diff_q8 = (timestamps.first.twr.poll_rx.pwr_diff_q8 + timestamps.first.twr.resp_rx.pwr_diff_q8 +
-                                        timestamps.first.twr.final_rx.pwr_diff_q8) / 3;        
-        uint8_t certainty_ab = compute_certainty(MEAS_DSTWR, 0, avg_pwr_diff_q8);
-        network_update_certainty(id_A, id_B, certainty_ab);
-        network_update_certainty(id_B, id_A, certainty_ab);
+        int16_t avg_pwr_ab = (timestamps.first.twr.poll_rx.pwr_diff_q8
+                            + timestamps.first.twr.resp_rx.pwr_diff_q8
+                            + timestamps.first.twr.final_rx.pwr_diff_q8) / 3;
+        uint8_t cert_ab = compute_certainty(MEAS_DSTWR, 0, avg_pwr_ab);
+        network_update_certainty(id_A, id_B, cert_ab);
+        network_update_certainty(id_B, id_A, cert_ab);
+        mprintf("[TWR] 0x%04X<->0x%04X: %.3f m\n", id_A, id_B, tof_ab * METERS_PER_TICK);
 
-        mprintf("---After DS-TWR -----");
-        network_print_certainty();
+        if (tof_ab < 0.0) goto done;
 
-        mprintf("[TWR] 0x%04X<->0x%04X: %.3f m\n",
-                id_A,
-                id_B,
-                first_order_distance * METERS_PER_TICK);
-
-        /* Second-order: A/B <-> C via passive(s) */
-        uint16_t processed_C[NETWORK_MAX_PEERS];
+        /* ── 2. Second order ──────────────────────────────────────────── */
+        uint16_t processed_C[MAX_PASSIVE];
         uint8_t  processed_count = 0;
 
         for (uint8_t i = 0; i < timestamps.second_count; i++) {
-
             second_order_t *cur = &timestamps.second[i];
-
-            /* C is always the responder; skip if this is not an A->C entry */
             if (cur->initiator_id != id_A) continue;
             uint16_t id_C = cur->responder_id;
 
-            /* Skip already processed C */
             bool already_done = false;
-            for (uint8_t p = 0; p < processed_count; p++) {
-                if (processed_C[p] == id_C) {
-                    already_done = true;
-                    break;
-                }
-            }
+            for (uint8_t p = 0; p < processed_count; p++)
+                if (processed_C[p] == id_C) { already_done = true; break; }
             if (already_done) continue;
 
-            /* Find the matching B->C entry */
-            second_order_t *entry_ac = cur;
-            second_order_t *entry_bc = NULL;
+            second_order_t *entry_ac = cur, *entry_bc = NULL;
             for (uint8_t j = 0; j < timestamps.second_count; j++) {
                 if (timestamps.second[j].initiator_id == id_B &&
                     timestamps.second[j].responder_id == id_C) {
-                    entry_bc = &timestamps.second[j];
-                    break;
+                    entry_bc = &timestamps.second[j]; break;
                 }
             }
+            if (!entry_bc) { mprintf("[ERR] second-order: no B-C for C=0x%04X\n", id_C); continue; }
 
-            if (entry_bc == NULL) {
-                mprintf("[ERR] second-order: no B->C entry for C=0x%04X\n", id_C);
-                continue;
-            }
+            double k_A = network_get_k(id_A, id_C);
+            double k_B = network_get_k(id_B, id_C);
 
-            double k_A     = network_get_k(id_A, id_C);
-            double k_B     = network_get_k(id_B, id_C);
             double prev_ac = dist_scale_to_ticks(network_get_distance(id_A, id_C));
             double prev_bc = dist_scale_to_ticks(network_get_distance(id_B, id_C));
 
-            second_order_result_t res = calculate_second_order_distances(
-                    entry_ac, entry_bc,
-                    &timestamps.first,
-                    first_order_distance,
-                    prev_ac, prev_bc,
-                    &k_A, &k_B);
+            calculate_second_order_distances(entry_ac, entry_bc,
+                                            &timestamps.first,
+                                            prev_ac, prev_bc, &k_A, &k_B);
 
-            if (res.tof_ac_ticks < 0.0) res.tof_ac_ticks = 0.0;
-            if (res.tof_bc_ticks < 0.0) res.tof_bc_ticks = 0.0;
+            network_set_distance(id_A, id_C, dist_ticks_to_scale(entry_ac->result_distance_tick));
+            network_set_distance(id_C, id_A, dist_ticks_to_scale(entry_ac->result_distance_tick));
+            network_set_distance(id_B, id_C, dist_ticks_to_scale(entry_bc->result_distance_tick));
+            network_set_distance(id_C, id_B, dist_ticks_to_scale(entry_bc->result_distance_tick));
 
-            network_set_distance(id_A, id_C, dist_ticks_to_scale(res.tof_ac_ticks));
-            network_set_distance(id_C, id_A, dist_ticks_to_scale(res.tof_ac_ticks));
-
-            network_set_distance(id_B, id_C, dist_ticks_to_scale(res.tof_bc_ticks));
-            network_set_distance(id_C, id_B, dist_ticks_to_scale(res.tof_bc_ticks));
-
-            /*
-             * SS-TWR certainty: +1 for self <-> passive (C).
-             * id_A already received DS-TWR +3 above.
-             * Do NOT update id_A <-> id_C here — self has no direct
-             * measurement of that pair.
-             */
-            int16_t avg_pwr_diff_q8_bc = (entry_bc->twr.init_rx.pwr_diff_q8 + entry_bc->twr.answer_rx.pwr_diff_q8) / 2;
+            int16_t avg_pwr_bc = (entry_bc->twr.init_rx.pwr_diff_q8
+                                + entry_bc->twr.answer_rx.pwr_diff_q8) / 2;
             uint64_t gap_bc = (entry_bc->twr.answer_rx.ts - entry_bc->twr.init_tx) & UWB_40BIT_MASK;
-            uint8_t certainty_bc = compute_certainty(MEAS_SSTWR, 
-                (float)gap_bc * DWT_TICK_TO_US, avg_pwr_diff_q8_bc);
-            network_update_certainty(id_B, id_C, certainty_bc);
-            network_update_certainty(id_C, id_B, certainty_bc);
+            network_update_certainty(id_B, id_C,
+                compute_certainty(MEAS_SSTWR, (float)gap_bc * DWT_TICK_TO_US, avg_pwr_bc));
+            network_update_certainty(id_C, id_B,
+                compute_certainty(MEAS_SSTWR, (float)gap_bc * DWT_TICK_TO_US, avg_pwr_bc));
 
-            int16_t avg_pwr_diff_q8_ac = (entry_ac->twr.init_rx.pwr_diff_q8 + entry_ac->twr.answer_rx.pwr_diff_q8) / 2;
+            int16_t avg_pwr_ac = (entry_ac->twr.init_rx.pwr_diff_q8
+                                + entry_ac->twr.answer_rx.pwr_diff_q8) / 2;
             uint64_t gap_ac = (entry_ac->twr.answer_rx.ts - entry_ac->twr.init_tx) & UWB_40BIT_MASK;
-            uint8_t certainty_ac = compute_certainty(MEAS_SSTWR, 
-                (float)gap_ac * DWT_TICK_TO_US, avg_pwr_diff_q8_ac);
-            network_update_certainty(id_A, id_C, certainty_ac);
-            network_update_certainty(id_C, id_A, certainty_ac);
+            network_update_certainty(id_A, id_C,
+                compute_certainty(MEAS_SSTWR, (float)gap_ac * DWT_TICK_TO_US, avg_pwr_ac));
+            network_update_certainty(id_C, id_A,
+                compute_certainty(MEAS_SSTWR, (float)gap_ac * DWT_TICK_TO_US, avg_pwr_ac));
 
-
-            /* Update k smoothing for this passive */
             network_set_k(id_A, id_C, k_A);
             network_set_k(id_B, id_C, k_B);
-
             processed_C[processed_count++] = id_C;
         }
 
-        for (uint8_t i = 0; i < timestamps.third_count; i++) {
-            const third_order_t *to = &timestamps.third[i];
-            uint16_t id_C = to->initiator_id;
-            uint16_t id_D = to->responder_id;
+         /* ── 3. Third order ───────────────────────────────────────────── */
+        for (uint8_t t = 0; t < timestamps.third_count; t++) {
+            third_order_t *to = &timestamps.third[t];
+            uint16_t id_C3 = to->initiator_id;
+            uint16_t id_D  = to->responder_id;
 
-            double tof_ac = dist_scale_to_ticks(network_get_distance(id_A, id_C));
-            double tof_bc = dist_scale_to_ticks(network_get_distance(id_B, id_C));
-            double tof_ad = dist_scale_to_ticks(network_get_distance(id_A, id_D));
-            double tof_bd = dist_scale_to_ticks(network_get_distance(id_B, id_D));
+            /* Find second-order entries to get tof_ac, tof_bc, tof_ad, tof_bd */
+            double tof_ac = -1.0, tof_bc = -1.0, tof_ad = -1.0, tof_bd = -1.0;
+            for (uint8_t i = 0; i < timestamps.second_count; i++) {
+                const second_order_t *s = &timestamps.second[i];
+                if (s->initiator_id == id_A && s->responder_id == id_C3) tof_ac = s->result_distance_tick;
+                if (s->initiator_id == id_B && s->responder_id == id_C3) tof_bc = s->result_distance_tick;
+                if (s->initiator_id == id_A && s->responder_id == id_D)  tof_ad = s->result_distance_tick;
+                if (s->initiator_id == id_B && s->responder_id == id_D)  tof_bd = s->result_distance_tick;
+            }
 
-            double k_ac = network_get_k(id_A, id_C);
-            double k_bc = network_get_k(id_B, id_C);
+            double k_ac = network_get_k(id_A, id_C3);
+            double k_bc = network_get_k(id_B, id_C3);
             double k_ad = network_get_k(id_A, id_D);
             double k_bd = network_get_k(id_B, id_D);
 
-            double tof_cd = calculate_third_order_distance(
-                                to, &timestamps.first,
-                                tof_ac, tof_bc, tof_ad, tof_bd,
-                                k_ac, k_bc, k_ad, k_bd);
+            calculate_third_order_distance(to, &timestamps.first,
+                                            tof_ac, tof_bc, tof_ad, tof_bd,
+                                            &k_ac, &k_bc, &k_ad, &k_bd);
 
-            if (tof_cd < 0.0) continue;
+            network_set_k(id_A, id_C3, k_ac);
+            network_set_k(id_B, id_C3, k_bc);
+            network_set_k(id_A, id_D,  k_ad);
+            network_set_k(id_B, id_D,  k_bd);
 
-            network_set_distance(id_C, id_D, dist_ticks_to_scale(tof_cd));
-            network_set_distance(id_D, id_C, dist_ticks_to_scale(tof_cd));
+            network_set_distance(id_C3, id_D, dist_ticks_to_scale(to->result_distance_tick));
+            network_set_distance(id_D, id_C3, dist_ticks_to_scale(to->result_distance_tick));
 
-
-            int16_t worst_pwr_diff_A = to->twr_observation.poll_rx.pwr_diff_q8;
-            int16_t worst_pwr_diff_B = to->twr_observation.resp_rx.pwr_diff_q8;
-            int16_t avg_pwr_diff_q8  = (worst_pwr_diff_A + worst_pwr_diff_B) / 2;
-
-            /* Time gap: D_rx_C minus C_tx */
+            int16_t worst_pwr_A = (to->twr_observation_c.poll_rx.pwr_diff_q8
+                                + to->twr_observation_d.poll_rx.pwr_diff_q8) / 2;
+            int16_t worst_pwr_B = (to->twr_observation_c.resp_rx.pwr_diff_q8
+                                + to->twr_observation_d.resp_rx.pwr_diff_q8) / 2;
+            int16_t avg_pwr_cd  = (worst_pwr_A + worst_pwr_B) / 2;
             uint64_t gap_cd = (to->twr.answer_rx.ts - to->twr.init_tx) & UWB_40BIT_MASK;
-
-            uint8_t certainty_cd = compute_certainty(MEAS_TDOA_SSTWR,   /* was: MEAS_TDOA */
-                                                    (float)gap_cd * DWT_TICK_TO_US,
-                                                    avg_pwr_diff_q8);
-
-            network_update_certainty(id_C, id_D, certainty_cd);
-            network_update_certainty(id_D, id_C, certainty_cd);
+            uint8_t cert_cd = compute_certainty(MEAS_TDOA_SSTWR,
+                                                (float)gap_cd * DWT_TICK_TO_US, avg_pwr_cd);
+            network_update_certainty(id_C3, id_D, cert_cd);
+            network_update_certainty(id_D, id_C3, cert_cd);
         }
+        done:;
     }
     /* Pad to exactly 10 ms from entry regardless of which path was taken */
     uint32_t elapsed = osKernelGetTickCount() - t_start;
     if (elapsed < 10U) osDelay(10U - elapsed);
 }
-
-/*
-uint64_t position_calibrate_timestamp(uint64_t orig_timestamp){
-    return orig_timestamp-1;
-}
-    */
