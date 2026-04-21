@@ -658,7 +658,7 @@ void distance_calculate(uwb_etwr_result_t result)
     uint32_t t_start = osKernelGetTickCount();
 
     if (result == UWB_TWR_RECEIVED) {
-
+        
         /* Build timestamp structures for this round */
         populate_computation_structs(&timestamps);
 
@@ -677,8 +677,8 @@ void distance_calculate(uwb_etwr_result_t result)
          * DS-TWR certainty: +3 for the directly ranged pair A <-> B.
          * This always runs, even with no passive nodes.
          */
-        uint16_t avg_pwr_diff_q8 = (timestamps.first.twr.poll_rx.pwr_diff_q8 + timestamps.first.twr.resp_rx.pwr_diff_q8 + 
-                                        timestamps.first.twr.final_rx.pwr_diff_q8) / 3;
+        int16_t avg_pwr_diff_q8 = (timestamps.first.twr.poll_rx.pwr_diff_q8 + timestamps.first.twr.resp_rx.pwr_diff_q8 +
+                                        timestamps.first.twr.final_rx.pwr_diff_q8) / 3;        
         uint8_t certainty_ab = compute_certainty(MEAS_DSTWR, 0, avg_pwr_diff_q8);
         network_update_certainty(id_A, id_B, certainty_ab);
         network_update_certainty(id_B, id_A, certainty_ab);
@@ -756,15 +756,17 @@ void distance_calculate(uwb_etwr_result_t result)
              * Do NOT update id_A <-> id_C here — self has no direct
              * measurement of that pair.
              */
-            uint16_t avg_pwr_diff_q8_bc = (entry_bc->twr.init_rx.pwr_diff_q8 + entry_bc->twr.answer_rx.pwr_diff_q8) / 2;
+            int16_t avg_pwr_diff_q8_bc = (entry_bc->twr.init_rx.pwr_diff_q8 + entry_bc->twr.answer_rx.pwr_diff_q8) / 2;
+            uint64_t gap_bc = (entry_bc->twr.answer_rx.ts - entry_bc->twr.init_tx) & UWB_40BIT_MASK;
             uint8_t certainty_bc = compute_certainty(MEAS_SSTWR, 
-                (float)(entry_bc->twr.answer_rx.ts - entry_bc->twr.init_tx) *DWT_TICK_TO_US, avg_pwr_diff_q8_bc);
+                (float)gap_bc * DWT_TICK_TO_US, avg_pwr_diff_q8_bc);
             network_update_certainty(id_B, id_C, certainty_bc);
             network_update_certainty(id_C, id_B, certainty_bc);
 
-            uint16_t avg_pwr_diff_q8_ac = (entry_ac->twr.init_rx.pwr_diff_q8 + entry_ac->twr.answer_rx.pwr_diff_q8) / 2;
+            int16_t avg_pwr_diff_q8_ac = (entry_ac->twr.init_rx.pwr_diff_q8 + entry_ac->twr.answer_rx.pwr_diff_q8) / 2;
+            uint64_t gap_ac = (entry_ac->twr.answer_rx.ts - entry_ac->twr.init_tx) & UWB_40BIT_MASK;
             uint8_t certainty_ac = compute_certainty(MEAS_SSTWR, 
-                (float)(entry_ac->twr.answer_rx.ts - entry_ac->twr.init_tx) *DWT_TICK_TO_US, avg_pwr_diff_q8_ac);
+                (float)gap_ac * DWT_TICK_TO_US, avg_pwr_diff_q8_ac);
             network_update_certainty(id_A, id_C, certainty_ac);
             network_update_certainty(id_C, id_A, certainty_ac);
 
