@@ -7,6 +7,8 @@ void distance_calculate(uwb_etwr_result_t result);
 
 uint64_t position_calibrate_timestamp(uint64_t orig_timestamp);
 
+//#define DEBUG_distance_populate
+
 //#define DWT_TIME_UNITS   (1.0 / (499.2e6 * 128.0))
 #define SPEED_OF_LIGHT   299702547.0
 #define METERS_PER_TICK  ((float)(DWT_TIME_UNITS * SPEED_OF_LIGHT)) /* ~4.6917e-3 */
