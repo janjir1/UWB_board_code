@@ -163,9 +163,10 @@ typedef struct {
                                                  *   The TWR pair (initiator + responder) never
                                                  *   send passive frames, hence the -2. */
     int16_t entry_pwr_diff_q8[NETWORK_MAX_PEERS - 2];
+    bool    entry_antenna_unreliable[NETWORK_MAX_PEERS - 2]; 
     uint16_t entry_id[NETWORK_MAX_PEERS - 2];
 
-    float IMU_pitch_rad;
+    
     float IMU_vel_horiz;
     float IMU_vel_vert;
 
@@ -192,7 +193,7 @@ typedef struct {
     uint8_t  vel_horiz[NETWORK_MAX_PEERS];     /**< Horizontal speed, offset-binary.          */
 
     /* Per-pair distances (upper-triangle order, no IDs stored) */
-    uint16_t distance_mm [NETWORK_MAX_PAIRS];  /**< Distance 0–200 m in ~3.05 mm/LSB.        */
+    uint16_t distance_mm [NETWORK_MAX_PAIRS];  /**< Distance 0–200 m in ~3.05 mm/LSB. wrong name        */
     uint8_t  accuracy    [NETWORK_MAX_PAIRS];  /**< Certainty score (0=unknown, 255=best).    */
 } msg_share_t;
 
@@ -216,9 +217,10 @@ typedef struct {
                                                  *   The TWR pair (initiator + responder) never
                                                  *   send passive frames, hence the -2. */
     int16_t entry_pwr_diff_q8[NETWORK_MAX_PEERS - 2]; /**< RSSI of the received PASSIVE frames at this node (Q8). */
+    bool    entry_antenna_unreliable[NETWORK_MAX_PEERS - 2]; 
     uint16_t entry_ids[NETWORK_MAX_PEERS - 2];    /**< Network IDs of the preceding PASSIVE frames, in the same order as @c entries. */
 
-    float IMU_pitch_rad;
+
     float IMU_vel_horiz;
     float IMU_vel_vert;
 

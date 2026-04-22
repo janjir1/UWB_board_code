@@ -275,7 +275,7 @@ void network_store_final(const msg_final_t *msg, const uwb_rx_meas_t *rx)
 /* ---- PASSIVE (one report per call, index = arrival order) ---- */
 
 bool network_store_passive(uint8_t index, const msg_passive_t *msg,
-                           const uwb_rx_meas_t *rx, uint16_t device_id)
+                           const uwb_rx_meas_t *rx, const uint16_t device_id)
 {
     if (index >= NETWORK_MAX_PEERS - 2) return false;
     net.measurements.passive[index]    = *msg;

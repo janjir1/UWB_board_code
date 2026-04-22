@@ -19,6 +19,7 @@ add_library(app STATIC
     UWB_app/uwb_network.c
     UWB_app/uwb_exchange.c
     Calculations/distance.c
+    Calculations/calibrate.c
 )
 
 target_include_directories(app PUBLIC

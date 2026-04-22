@@ -385,7 +385,7 @@ void dwm_rx_flush(void)
 }
 
 //TODO implement preamble seeking
-void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms, bool keep_listening, bool first_call)
+void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms, bool keep_listening, bool first_call, int16_t *clock_offset_out)
 {
     if (first_call) {
         dwt_forcetrxoff();
@@ -406,6 +406,13 @@ void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms, bool keep_listening, bo
         result->type   = DWM_RX_TIMEOUT;
         result->status = 0;
         return;
+    }
+
+    if (clock_offset_out){
+        int16_t cfo_raw = 0;
+        if (frame.type == DWM_RX_OK)
+            cfo_raw = dwt_readclockoffset();
+        *clock_offset_out = cfo_raw;
     }
 
     if (keep_listening && frame.type == DWM_RX_OK) {
@@ -430,6 +437,8 @@ void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms, bool keep_listening, bo
 
     if (dwt_calculate_first_path_power(&frame.rx_diag, DWT_ACC_IDX_IP_M, &result->fp_q8) != DWT_SUCCESS)
         mprintf("ERROR: FP power calc failed\r\n");
+
+
 }
 
 // ─── TX ───────────────────────────────────────────────────────────────────────
@@ -703,7 +712,7 @@ void dwm_rx_continuous_sleep(void)
         osDelay(800);
 
         dwm_wakeup();
-        dwm_rx(&result, 40, false, false);
+        dwm_rx(&result, 40, false, false, NULL);
         dwm_sleep();
 
         switch (result.type) {

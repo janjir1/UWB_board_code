@@ -14,11 +14,14 @@
 #include "uwb_exchange.h"
 #include "distance.h"
 #include "lsm6dsv.h"
-
+#include "calibrate.h"
 
 //TODO reinitiating the dwm3000 sucks try to use some integrated hw function - do only when extra time is available
 
 //TODO when waiting for SHARE we can ho to idle_rc
+//TODO are we waiting for the DWM to timeout to turn itself off?
+//TODO set correct value for power in channel 9
+//TODO start this task when interupted from dwm? might speed up the exchange
 /* -----------------------------------------------------------------------
  * Forward declarations
  * ----------------------------------------------------------------------- */
@@ -34,7 +37,8 @@ static void remove_silent_passive_peers(const uint16_t *expected_ids,
                                         uint8_t heard_count);
 
 static uwb_etwr_result_t uwb_wait_for_PASSIVES(uint64_t entries[],
-                                               int16_t entry_rssi_q8[],
+                                               int16_t entry_pwr_diff_q8[],
+                                               bool antenna_unreliable[],
                                                uint16_t entry_ids[],
                                                uint8_t *out_count,
                                                msg_passive_t out_passive_msgs[],
@@ -188,7 +192,7 @@ uwb_sync_result_t uwb_sync()
             uint32_t elapsed = osKernelGetTickCount() - t_start;
             if (elapsed >= T_SYNC_RX_ANSWER) break;
 
-            dwm_rx(&rx_frame, T_SYNC_RX_ANSWER - elapsed, true, first_rx);
+            dwm_rx(&rx_frame, T_SYNC_RX_ANSWER - elapsed, true, first_rx, NULL);
             first_rx = (rx_frame.type != DWM_RX_OK);
 
             switch (rx_frame.type) {
@@ -234,9 +238,10 @@ uwb_sync_result_t uwb_sync()
         uint8_t timeout_count = 0;
         dwm_rx_flush();
         bool first_rx = true;
+        int16_t clock_offset;
         while (1) {
             osDelay(1);
-            dwm_rx(&rx_frame, T_SYNC_RX_SET, true, first_rx);
+            dwm_rx(&rx_frame, T_SYNC_RX_SET, true, first_rx, &clock_offset);
             first_rx = (rx_frame.type != DWM_RX_OK);
 
             switch (rx_frame.type) {
@@ -251,6 +256,7 @@ uwb_sync_result_t uwb_sync()
 
                         uint32_t t_start = osKernelGetTickCount();
                         osThreadFlagsSet(AccelerometerHandle, 0x01);
+                        calibrate_set_clock_offset_sync(clock_offset);
 
                         if (rx_msg.sender != network_get_master()) {
                             if (rx_msg.sender > network_get_master()) {
@@ -259,6 +265,7 @@ uwb_sync_result_t uwb_sync()
                                                                rx_msg.data.sync.peer_ids,
                                                                rx_msg.data.sync.peer_count);
                                 network_set_expected_seq_num(rx_msg.data.sync.seq_num);
+                                
                             } else {
                                 mprintf("ERROR: SYNC from unexpected master 0x%04X (exp 0x%04X)\r\n",
                                         rx_msg.sender, network_get_master());
@@ -329,7 +336,7 @@ static bool uwb_wait_for_RESPONSE(uint16_t target_id,
             return false;
         }
 
-        dwm_rx(&rx_frame, T_RESPONSE_RX_WAIT - elapsed, true, first_rx);
+        dwm_rx(&rx_frame, T_RESPONSE_RX_WAIT - elapsed, true, first_rx, NULL);
         first_rx = (rx_frame.type != DWM_RX_OK);;
 
         switch (rx_frame.type) {
@@ -376,7 +383,7 @@ static bool uwb_wait_for_FINAL()
             return false;
         }
 
-        dwm_rx(&rx_frame, T_FINAL_RX_WAIT - elapsed, true, first_rx);
+        dwm_rx(&rx_frame, T_FINAL_RX_WAIT - elapsed, true, first_rx, NULL);
         first_rx = (rx_frame.type != DWM_RX_OK);;
 
         switch (rx_frame.type) {
@@ -451,10 +458,22 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
         if (!uwb_wait_for_RESPONSE(target_id, &final_msg.resp_rx_ts, &final_msg.resp_pwr_diff_q8))
             return UWB_TWR_TIMEOUT;
 
+        uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 2);
+        float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
+        if (!(flags & 0x80000000U) && (flags & 0x02))
+            imu_get_results(&pitch_rad, &speed_horiz, &vel_z);
+
+        final_msg.IMU_vel_horiz = speed_horiz;
+        final_msg.IMU_vel_vert  = vel_z;
+
+        calibrate_set_pitch(pitch_rad);
+
         msg_passive_t passive_msgs[NETWORK_MAX_PEERS - 2];
-        uwb_wait_for_PASSIVES(final_msg.entries, final_msg.entry_pwr_diff_q8,
-                              final_msg.entry_id, &final_msg.entry_count,
-                              passive_msgs, target_id);
+        uwb_wait_for_PASSIVES(final_msg.entries, final_msg.entry_pwr_diff_q8, final_msg.entry_antenna_unreliable, 
+                               final_msg.entry_id, &final_msg.entry_count,
+                               passive_msgs, target_id);
+
+
 
         if (!uwb_send_FINAL(network_get_expected_seq_num(), target_id, &final_msg))
             return UWB_TWR_TX_FAILED;
@@ -474,6 +493,7 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
 
         dwm_rx_frame_t rx_frame = {0};
         uint32_t t_start = osKernelGetTickCount();
+        int16_t clock_offset;
         bool first_rx = true;
         while (1) {
             uint32_t elapsed = osKernelGetTickCount() - t_start;
@@ -482,7 +502,7 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
                 return UWB_TWR_TIMEOUT;
             }
 
-            dwm_rx(&rx_frame, T_TWR_RX_WAIT - elapsed, true, first_rx);
+            dwm_rx(&rx_frame, T_TWR_RX_WAIT - elapsed, true, first_rx, &clock_offset);
             first_rx = (rx_frame.type != DWM_RX_OK);;
 
             switch (rx_frame.type) {
@@ -491,6 +511,8 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
                 msg_decode(&rx_frame, &rx_msg);
 
                 if (rx_msg.type == MSG_TYPE_POLL) {
+
+                    calibrate_set_clock_offset_poll(clock_offset);
 
                     if (rx_msg.sender != network_get_master()) {
                         mprintf("ERROR: POLL from unexpected sender 0x%04X (master: 0x%04X)\r\n",
@@ -520,11 +542,12 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
 
                         uint64_t entries[NETWORK_MAX_PEERS - 2];
                         int16_t  entry_pwr_diff_q8[NETWORK_MAX_PEERS - 2];
+                        bool    entry_antenna_unreliable[NETWORK_MAX_PEERS - 2];
                         uint16_t entry_ids[NETWORK_MAX_PEERS - 2];
                         uint8_t  count = 0;
                         msg_passive_t passive_msgs[NETWORK_MAX_PEERS - 2];
 
-                        uwb_wait_for_PASSIVES(entries, entry_pwr_diff_q8, entry_ids,
+                        uwb_wait_for_PASSIVES(entries, entry_pwr_diff_q8, entry_antenna_unreliable, entry_ids,
                                               &count, passive_msgs, network_get_master());
 
                         for (uint8_t idx = 0; idx < count; idx++) {
@@ -552,6 +575,17 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
                                                    &passive_msg.resp_rx_ts,
                                                    &passive_msg.resp_pwr_diff_q8))
                             return UWB_TWR_TIMEOUT;
+
+                        uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 2);
+                        float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
+                        if (!(flags & 0x80000000U) && (flags & 0x02))
+                            imu_get_results(&pitch_rad, &speed_horiz, &vel_z);
+
+
+                        passive_msg.IMU_vel_horiz = speed_horiz;
+                        passive_msg.IMU_vel_vert  = vel_z;
+
+                        calibrate_set_pitch(pitch_rad);
 
                         uwb_etwr_result_t result = uwb_send_PASSIVE(network_get_master(),
                                                                      rx_msg.receiver,
@@ -768,7 +802,7 @@ uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)
                 return 0;
             }
 
-            dwm_rx(&rx_frame, T_SHARE_RX_WAIT - elapsed, true, first_rx);
+            dwm_rx(&rx_frame, T_SHARE_RX_WAIT - elapsed, true, first_rx, NULL);
             first_rx = (rx_frame.type != DWM_RX_OK);
 
             switch (rx_frame.type) {
@@ -931,15 +965,6 @@ static bool uwb_send_RESPONSE(uint8_t seq_num, uint16_t target_id, uint64_t *out
 static bool uwb_send_FINAL(uint8_t seq_num, uint16_t target_id, msg_final_t *final_msg)
 {
 
-    uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 2);
-    float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
-    if (!(flags & 0x80000000U) && (flags & 0x02))
-        imu_get_results(&pitch_rad, &speed_horiz, &vel_z);
-
-    final_msg->IMU_pitch_rad = pitch_rad;
-    final_msg->IMU_vel_horiz = speed_horiz;
-    final_msg->IMU_vel_vert  = vel_z;
-
     uint32_t now_hi32       = dwt_readsystimestamphi32();
     uint64_t now            = (uint64_t)now_hi32 << 8;
     uint64_t final_tx_desired = now + T_FINAL_TX_ASAP_TICKS;
@@ -986,6 +1011,7 @@ static bool uwb_send_FINAL(uint8_t seq_num, uint16_t target_id, msg_final_t *fin
 
 static uwb_etwr_result_t uwb_wait_for_PASSIVES(uint64_t entries[],
                                                int16_t entry_pwr_diff_q8[],
+                                               bool antenna_unreliable[],
                                                uint16_t entry_ids[],
                                                uint8_t *out_count,
                                                msg_passive_t out_passive_msgs[],
@@ -1027,7 +1053,7 @@ static uwb_etwr_result_t uwb_wait_for_PASSIVES(uint64_t entries[],
             return UWB_TWR_TIMEOUT;
         }
 
-        dwm_rx(&rx_frame, wait_time - elapsed, true, first_rx);
+        dwm_rx(&rx_frame, wait_time - elapsed, true, first_rx, NULL);
         first_rx = (rx_frame.type != DWM_RX_OK);
 
         switch (rx_frame.type) {
@@ -1044,10 +1070,19 @@ static uwb_etwr_result_t uwb_wait_for_PASSIVES(uint64_t entries[],
                     return UWB_TWR_UNEXPECTED_MASTER;
                 }
 
-                entries[idx]          = rx_frame.rx_timestamp;
+                bool single_antenna_unreliable = false;
+
+                entries[idx] = calibrate_rx_timestamp(
+                    rx_frame.rx_timestamp,
+                    rx_frame.rssi_q8,
+                    rx_msg.sender,
+                    &single_antenna_unreliable
+                );
+
                 entry_pwr_diff_q8[idx] = rx_frame.rssi_q8 - rx_frame.fp_q8;
                 out_passive_msgs[idx] = rx_msg.data.passive;
                 entry_ids[idx]        = rx_msg.sender;
+                antenna_unreliable[idx] = single_antenna_unreliable;
                 idx++;
 
                 if (idx == expected_count) {
@@ -1117,7 +1152,7 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
             return UWB_TWR_TIMEOUT;
         }
 
-        dwm_rx(&rx_frame, wait_time - elapsed, true, first_rx);
+        dwm_rx(&rx_frame, wait_time - elapsed, true, first_rx, NULL);
         first_rx = (rx_frame.type != DWM_RX_OK);
 
         switch (rx_frame.type) {
@@ -1133,9 +1168,18 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
                 if (!seq_ok(rx_msg.data.passive.seq_num, "PASSIVE"))
                     break;
 
-                passive_msg->entries[idx]       = rx_frame.rx_timestamp;
+                bool single_antenna_unreliable = false;
+
+                passive_msg->entries[idx] = calibrate_rx_timestamp(
+                    rx_frame.rx_timestamp,
+                    rx_frame.rssi_q8,
+                    rx_msg.sender,
+                    &single_antenna_unreliable
+                );
+
                 passive_msg->entry_pwr_diff_q8[idx] = rx_frame.rssi_q8 - rx_frame.fp_q8;
                 passive_msg->entry_ids[idx]     = rx_msg.sender;
+                passive_msg->entry_antenna_unreliable[idx] = single_antenna_unreliable;
                 idx++;
             }
             break;
@@ -1151,14 +1195,7 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
 
     passive_msg->entry_count = idx;
 
-    uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 2);
-    float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
-    if (!(flags & 0x80000000U) && (flags & 0x02))
-        imu_get_results(&pitch_rad, &speed_horiz, &vel_z);
 
-    passive_msg->IMU_pitch_rad = pitch_rad;
-    passive_msg->IMU_vel_horiz = speed_horiz;
-    passive_msg->IMU_vel_vert  = vel_z;
 
     /* Schedule TX — 9-bit aligned delayed TX to embed correct timestamp. */
     uint32_t now_hi32           = dwt_readsystimestamphi32();

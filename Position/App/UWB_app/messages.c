@@ -202,9 +202,11 @@ static void msg_decode_final(const dwm_rx_frame_t *frame, msg_final_t *out)
             memcpy(&out->entry_id[i],      p, sizeof(uint16_t));
         }
         p += sizeof(uint16_t);
+
+        if (i < count) out->entry_antenna_unreliable[i] = (*p != 0);
+        p += 1;
     }
 
-    memcpy(&out->IMU_pitch_rad, p, sizeof(float)); p += sizeof(float);
     memcpy(&out->IMU_vel_horiz, p, sizeof(float)); p += sizeof(float);
     memcpy(&out->IMU_vel_vert,  p, sizeof(float)); p += sizeof(float);
 }
@@ -299,9 +301,9 @@ static void msg_decode_passive(const dwm_rx_frame_t *frame, msg_passive_t *out)
         memcpy(&out->entries[i],       p, MSG_TS_LEN);       p += MSG_TS_LEN;
         memcpy(&out->entry_pwr_diff_q8[i], p, sizeof(int16_t)); p += sizeof(int16_t);
         memcpy(&out->entry_ids[i],     p, sizeof(uint16_t)); p += sizeof(uint16_t);
+        out->entry_antenna_unreliable[i] = (*p != 0); p += 1;
     }
 
-    memcpy(&out->IMU_pitch_rad, p, sizeof(float)); p += sizeof(float);
     memcpy(&out->IMU_vel_horiz, p, sizeof(float)); p += sizeof(float);
     memcpy(&out->IMU_vel_vert,  p, sizeof(float)); p += sizeof(float);
 }
@@ -395,10 +397,10 @@ static uint16_t msg_encode_final(const msg_final_t *in, uint8_t *buf)
     for (int i = 0; i < in->entry_count; i++) {
         u64_to_ts_buf(in->entries[i], p);                    p += MSG_TS_LEN;
         memcpy(p, &in->entry_pwr_diff_q8[i], sizeof(int16_t));  p += sizeof(int16_t);
-        memcpy(p, &in->entry_id[i],      sizeof(uint16_t)); p += sizeof(uint16_t); // ← new
+        memcpy(p, &in->entry_id[i],      sizeof(uint16_t)); p += sizeof(uint16_t);
+        p[0] = in->entry_antenna_unreliable[i] ? 1 : 0; p += 1;
     }
 
-    memcpy(p, &in->IMU_pitch_rad, sizeof(float)); p += sizeof(float);
     memcpy(p, &in->IMU_vel_horiz, sizeof(float)); p += sizeof(float);
     memcpy(p, &in->IMU_vel_vert,  sizeof(float)); p += sizeof(float);
 
@@ -463,9 +465,9 @@ static uint16_t msg_encode_passive(const msg_passive_t *in, uint8_t *buf)
         u64_to_ts_buf(in->entries[i], p);       p += MSG_TS_LEN;
         memcpy(p, &in->entry_pwr_diff_q8[i], sizeof(int16_t)); p += sizeof(int16_t);
         memcpy(p, &in->entry_ids[i],     sizeof(uint16_t));  p += sizeof(uint16_t);
+        p[0] = in->entry_antenna_unreliable[i] ? 1 : 0; p += 1;
     }
 
-    memcpy(p, &in->IMU_pitch_rad, sizeof(float)); p += sizeof(float);
     memcpy(p, &in->IMU_vel_horiz, sizeof(float)); p += sizeof(float);
     memcpy(p, &in->IMU_vel_vert,  sizeof(float)); p += sizeof(float);
 
