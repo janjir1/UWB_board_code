@@ -18,26 +18,6 @@
 
 timestamps_t timestamps;
 
-/*
- * k_ema_update() — EMA smooth a clock-ratio estimate into *k.
- *
- * alpha: how much weight to give the NEW sample.
- *   Higher alpha → faster adaptation, less smoothing.
- *   Recommended values:
- *     Second-order (direct SS-TWR):  0.20  — trusted, adapt quickly
- *     Third-order  (TDOA derived):   0.05  — less trusted, smooth heavily
- *
- * Seeding rule: if *k is exactly 1.0 (uninitialised default),
- * the first sample is taken directly without blending.
- */
-static void k_ema_update(double *k, double k_new, double alpha)
-{
-    if (*k == 1.0)
-        *k = k_new;                              /* first-call seed */
-    else
-        *k += alpha * (k_new - *k);              /* EMA: y += α*(x-y) */
-}
-
 uint8_t vel_vert_to_u8(float v)
 {
     float c = v < -VEL_VERT_RANGE_MS ? -VEL_VERT_RANGE_MS
@@ -88,8 +68,6 @@ void populate_computation_structs(timestamps_t *ts) {
 
     /* -----------------------------------------------------------------------
      * 1. FIRST ORDER: Initiator (A) and Responder (Self/B)
-     *    vel fields in timestamps_t are float — decode uint8_t from wire back
-     *    to float for computation, keep own IMU as raw float.
      * ----------------------------------------------------------------------- */
     ts->first.initiator_id        = initiator_id;
     ts->first.responder_id        = responder_id;
@@ -102,6 +80,9 @@ void populate_computation_structs(timestamps_t *ts) {
     ts->first.twr.resp_rx.pwr_diff_q8 = meas->final.resp_pwr_diff_q8;
     ts->first.twr.final_tx        = meas->final.final_tx_ts;
 
+    ts->first.twr.poll_rx_unreliable  = meas->poll_antenna_unreliable;
+    ts->first.twr.resp_rx_unreliable  = meas->final.resp_antenna_unreliable;
+    ts->first.twr.final_rx_unreliable = meas->final_antenna_unreliable;
 
     /* -----------------------------------------------------------------------
      * 2. SECOND ORDER
@@ -112,55 +93,63 @@ void populate_computation_structs(timestamps_t *ts) {
 
         twr_observation_t shared_obs = {
             .poll_rx = {
-                .ts      = meas->passive[i].poll_rx_ts,
+                .ts          = meas->passive[i].poll_rx_ts,
                 .pwr_diff_q8 = meas->passive[i].poll_pwr_diff_q8,
             },
+            .poll_rx_unreliable = meas->passive[i].poll_antenna_unreliable,
             .resp_rx = {
-                .ts      = meas->passive[i].resp_rx_ts,
+                .ts          = meas->passive[i].resp_rx_ts,
                 .pwr_diff_q8 = meas->passive[i].resp_pwr_diff_q8,
             },
+            .resp_rx_unreliable = meas->passive[i].resp_antenna_unreliable,
         };
 
         uwb_rx_meas_t a_rx_of_passive = {0};
+        bool a_rx_of_passive_unreliable = false;
         for (uint8_t k = 0; k < meas->final.entry_count; k++) {
             if (meas->final.entry_id[k] == passive_id) {
-                a_rx_of_passive.ts      = meas->final.entries[k];
-                a_rx_of_passive.pwr_diff_q8 = meas->final.entry_pwr_diff_q8[k];
+                a_rx_of_passive.ts           = meas->final.entries[k];
+                a_rx_of_passive.pwr_diff_q8  = meas->final.entry_pwr_diff_q8[k];
+                a_rx_of_passive_unreliable   = meas->final.entry_antenna_unreliable[k];
                 break;
             }
         }
 
-        /* Passive peer IMU: msg_passive_t carries float → encode to uint8_t for node_t */
+        /* Passive peer IMU */
         node_t *passive_node = find_peer(passive_id);
         if (passive_node) {
             passive_node->imu_vel_vert  = vel_vert_to_u8(meas->passive[i].IMU_vel_vert);
             passive_node->imu_vel_horiz = vel_horiz_to_u8(meas->passive[i].IMU_vel_horiz);
         }
 
-        if ((int)ts->second_count + 2 > MAX_SECOND_ORDER) { 
+        if ((int)ts->second_count + 2 > MAX_SECOND_ORDER) {
             mprintf("[ERR] populate: second_order overflow at passive %u\n", i);
             break;
         }
 
         /* A <-> Passive */
-        second_order_t *so_a      = &ts->second[ts->second_count++];
-        so_a->initiator_id        = initiator_id;
-        so_a->responder_id        = passive_id;
-        so_a->twr_observation     = shared_obs;
-        so_a->twr.init_tx         = meas->final.poll_tx_ts;
-        so_a->twr.init_rx         = shared_obs.poll_rx;
-        so_a->twr.answer_tx       = meas->passive[i].passive_tx_ts;
-        so_a->twr.answer_rx       = a_rx_of_passive;
+        second_order_t *so_a          = &ts->second[ts->second_count++];
+        so_a->initiator_id            = initiator_id;
+        so_a->responder_id            = passive_id;
+        so_a->twr_observation         = shared_obs;
+        so_a->twr.init_tx             = meas->final.poll_tx_ts;
+        so_a->twr.init_rx             = shared_obs.poll_rx;
+        so_a->twr.answer_tx           = meas->passive[i].passive_tx_ts;
+        so_a->twr.answer_rx           = a_rx_of_passive;
+        so_a->init_rx_unreliable      = shared_obs.poll_rx_unreliable; /* C heard A's poll */
+        so_a->answer_rx_unreliable    = a_rx_of_passive_unreliable;    /* A heard C's passive */
 
         /* B <-> Passive */
-        second_order_t *so_b      = &ts->second[ts->second_count++];
-        so_b->initiator_id        = responder_id;
-        so_b->responder_id        = passive_id;
-        so_b->twr_observation     = shared_obs;
-        so_b->twr.init_tx         = meas->resp_tx;
-        so_b->twr.init_rx         = shared_obs.resp_rx;
-        so_b->twr.answer_tx       = meas->passive[i].passive_tx_ts;
-        so_b->twr.answer_rx       = meas->passive_rx[i];
+        second_order_t *so_b          = &ts->second[ts->second_count++];
+        so_b->initiator_id            = responder_id;
+        so_b->responder_id            = passive_id;
+        so_b->twr_observation         = shared_obs;
+        so_b->twr.init_tx             = meas->resp_tx;
+        so_b->twr.init_rx             = shared_obs.resp_rx;
+        so_b->twr.answer_tx           = meas->passive[i].passive_tx_ts;
+        so_b->twr.answer_rx           = meas->passive_rx[i];
+        so_b->init_rx_unreliable      = shared_obs.resp_rx_unreliable; /* C heard B's response */
+        so_b->answer_rx_unreliable    = meas->passive_antenna_unreliable[i]; /* B heard C's passive */
     }
 
     /* -----------------------------------------------------------------------
@@ -174,40 +163,43 @@ void populate_computation_structs(timestamps_t *ts) {
             break;
         }
 
-        third_order_t *to       = &ts->third[ts->third_count++];
-        to->initiator_id        = meas->passive_device_id[i]; /* C */
-        to->responder_id        = meas->passive_device_id[j]; /* D */
-
+        third_order_t *to = &ts->third[ts->third_count++];
+        to->initiator_id  = meas->passive_device_id[i]; /* C */
+        to->responder_id  = meas->passive_device_id[j]; /* D */
 
         /* C's perspective of the A-B exchange */
         to->twr_observation_c.poll_rx.ts          = meas->passive[i].poll_rx_ts;
         to->twr_observation_c.poll_rx.pwr_diff_q8 = meas->passive[i].poll_pwr_diff_q8;
+        to->twr_observation_c.poll_rx_unreliable  = meas->passive[i].poll_antenna_unreliable;
         to->twr_observation_c.resp_rx.ts          = meas->passive[i].resp_rx_ts;
         to->twr_observation_c.resp_rx.pwr_diff_q8 = meas->passive[i].resp_pwr_diff_q8;
+        to->twr_observation_c.resp_rx_unreliable  = meas->passive[i].resp_antenna_unreliable;
 
         /* D's perspective of the A-B exchange */
         to->twr_observation_d.poll_rx.ts          = meas->passive[j].poll_rx_ts;
         to->twr_observation_d.poll_rx.pwr_diff_q8 = meas->passive[j].poll_pwr_diff_q8;
+        to->twr_observation_d.poll_rx_unreliable  = meas->passive[j].poll_antenna_unreliable;
         to->twr_observation_d.resp_rx.ts          = meas->passive[j].resp_rx_ts;
         to->twr_observation_d.resp_rx.pwr_diff_q8 = meas->passive[j].resp_pwr_diff_q8;
+        to->twr_observation_d.resp_rx_unreliable  = meas->passive[j].resp_antenna_unreliable;
 
-        /* ss_twr_t: C transmits (init_tx), D receives (answer_rx).
-        * init_rx = D's reception of C's passive TX (from D's entry list).
-        * answer_tx = D's passive TX timestamp. */
-        to->twr.init_tx   = meas->passive[i].passive_tx_ts;  /* C_tx */
-        to->twr.init_rx   = (uwb_rx_meas_t){0};              /* C_rx not available */
+        /* C_tx: C's passive TX */
+        to->twr.init_tx  = meas->passive[i].passive_tx_ts;
+        to->twr.init_rx  = (uwb_rx_meas_t){0}; /* C cannot hear D — C transmits first */
 
-        /* Find D's entry for C */
-        to->twr.answer_rx = (uwb_rx_meas_t){0};
+        /* Find D's entry for C (D_rx of C's passive frame) */
+        to->twr.answer_rx             = (uwb_rx_meas_t){0};
+        to->answer_rx_unreliable      = false;
         for (uint8_t k = 0; k < meas->passive[j].entry_count; k++) {
             if (meas->passive[j].entry_ids[k] == meas->passive_device_id[i]) {
-                to->twr.answer_rx.ts           = meas->passive[j].entries[k];
-                to->twr.answer_rx.pwr_diff_q8  = meas->passive[j].entry_pwr_diff_q8[k];
+                to->twr.answer_rx.ts          = meas->passive[j].entries[k];
+                to->twr.answer_rx.pwr_diff_q8 = meas->passive[j].entry_pwr_diff_q8[k];
+                to->answer_rx_unreliable      = meas->passive[j].entry_antenna_unreliable[k];
                 break;
             }
         }
 
-        to->twr.answer_tx = meas->passive[j].passive_tx_ts;  /* D_tx */
+        to->twr.answer_tx = meas->passive[j].passive_tx_ts; /* D_tx */
     }
     }
 }
@@ -441,13 +433,12 @@ static void calculate_second_order_distances(
     second_order_t      *so_a,
     second_order_t      *so_b,
     const first_order_t *first,
-    double tof_ac_init, double tof_bc_init,
-    double *k_A, double *k_B)
+    double tof_ac_init, double tof_bc_init)
 {
     so_a->result_distance_tick = -1.0;
     so_b->result_distance_tick = -1.0;
 
-    if (!so_a || !so_b || !first || !k_A || !k_B) return;
+    if (!so_a || !so_b || !first) return;
 
     if (so_a->responder_id != so_b->responder_id) {
         mprintf("[ERR] second_order: passive ID mismatch (%u vs %u)\n",
@@ -576,20 +567,17 @@ static void calculate_second_order_distances(
             so_b->initiator_id, so_b->responder_id, so_b->result_distance_tick,
             k_A_new, k_B_new);
 
-    k_ema_update(k_A, k_A_new, 0.20);
-    k_ema_update(k_B, k_B_new, 0.20);
 }
 
 
 static void calculate_third_order_distance(
     third_order_t *to, const first_order_t *first,
     double tof_ac_ticks, double tof_bc_ticks,
-    double tof_ad_ticks, double tof_bd_ticks,
-    double *k_ac, double *k_bc, double *k_ad, double *k_bd)
+    double tof_ad_ticks, double tof_bd_ticks)
 {
     if (!to || !first) return;
 
-    to->result_distance_tick = -1.0;  /* default until successfully computed */
+    to->result_distance_tick = -1.0;
 
     const twr_observation_t *obs_c = &to->twr_observation_c;
     const twr_observation_t *obs_d = &to->twr_observation_d;
@@ -603,12 +591,6 @@ static void calculate_third_order_distance(
         return;
     }
 
-    if (*k_ac == 1.0 || *k_ad == 1.0 || *k_bc == 1.0 || *k_bd == 1.0) {
-        mprintf("[WARN] third-order %04X<->%04X: k not yet estimated\n",
-                to->initiator_id, to->responder_id);
-        return;
-    }
-
     if (to->twr.answer_rx.ts == 0) {
         mprintf("[ERR] third-order %04X<->%04X: D_rx_C timestamp missing\n",
                 to->initiator_id, to->responder_id);
@@ -618,90 +600,100 @@ static void calculate_third_order_distance(
     const uint64_t poll_tx = first->twr.poll_tx;
     const uint64_t resp_tx = first->twr.resp_tx;
 
-    double c_off_A  = (double)((to->twr.init_tx      - obs_c->poll_rx.ts) & UWB_40BIT_MASK) / *k_ac;
-    double d_off_A  = (double)((to->twr.answer_rx.ts  - obs_d->poll_rx.ts) & UWB_40BIT_MASK) / *k_ad;
+    /* ── Estimate A: TDOA via A's poll frame ── */
+    double c_off_A  = (double)((to->twr.init_tx      - obs_c->poll_rx.ts) & UWB_40BIT_MASK);
+    double d_off_A  = (double)((to->twr.answer_rx.ts  - obs_d->poll_rx.ts) & UWB_40BIT_MASK);
     double tof_cd_A = ((double)poll_tx + tof_ad_ticks + d_off_A)
                     - ((double)poll_tx + tof_ac_ticks + c_off_A);
 
-    double c_off_B  = (double)((to->twr.init_tx      - obs_c->resp_rx.ts) & UWB_40BIT_MASK) / *k_bc;
-    double d_off_B  = (double)((to->twr.answer_rx.ts  - obs_d->resp_rx.ts) & UWB_40BIT_MASK) / *k_bd;
+    /* ── Estimate B: TDOA via B's response frame ── */
+    double c_off_B  = (double)((to->twr.init_tx      - obs_c->resp_rx.ts) & UWB_40BIT_MASK);
+    double d_off_B  = (double)((to->twr.answer_rx.ts  - obs_d->resp_rx.ts) & UWB_40BIT_MASK);
     double tof_cd_B = ((double)resp_tx + tof_bd_ticks + d_off_B)
                     - ((double)resp_tx + tof_bc_ticks + c_off_B);
 
+    /* ── Estimate C: direct one-way C_tx → D_rx, averaged over both references ── */
+    double tof_cd_C = -1.0;
+    if (to->twr.init_tx != 0 && to->twr.answer_rx.ts != 0) {
+        /* Via poll reference */
+        double tof_cd_C_poll =
+            ((double)poll_tx + tof_ad_ticks
+             + (double)((to->twr.answer_rx.ts - obs_d->poll_rx.ts) & UWB_40BIT_MASK))
+          - ((double)poll_tx + tof_ac_ticks
+             + (double)((to->twr.init_tx      - obs_c->poll_rx.ts) & UWB_40BIT_MASK));
+
+        /* Via response reference */
+        double tof_cd_C_resp =
+            ((double)resp_tx + tof_bd_ticks
+             + (double)((to->twr.answer_rx.ts - obs_d->resp_rx.ts) & UWB_40BIT_MASK))
+          - ((double)resp_tx + tof_bc_ticks
+             + (double)((to->twr.init_tx      - obs_c->resp_rx.ts) & UWB_40BIT_MASK));
+
+        tof_cd_C = (tof_cd_C_poll + tof_cd_C_resp) / 2.0;
+    }
+
     bool valid_A = (tof_cd_A >= -200.0);
     bool valid_B = (tof_cd_B >= -200.0);
+    bool valid_C = (tof_cd_C >= -200.0);
 
-    if (!valid_A && !valid_B) {
-        mprintf("[ERR] third-order %04X<->%04X: both estimates failed A=%.1f B=%.1f\n",
-                to->initiator_id, to->responder_id, tof_cd_A, tof_cd_B);
+    if (!valid_A && !valid_B && !valid_C) {
+        mprintf("[ERR] third-order %04X<->%04X: all estimates failed "
+                "A=%.1f B=%.1f C=%.1f\n",
+                to->initiator_id, to->responder_id,
+                tof_cd_A, tof_cd_B, tof_cd_C);
         return;
     }
 
+    /* ── RSSI-based weights ── */
     #define PDIFF_MAX_DB 40.0
     double diff_c_poll = (double)obs_c->poll_rx.pwr_diff_q8 / 256.0;
     double diff_d_poll = (double)obs_d->poll_rx.pwr_diff_q8 / 256.0;
     double diff_c_resp = (double)obs_c->resp_rx.pwr_diff_q8 / 256.0;
     double diff_d_resp = (double)obs_d->resp_rx.pwr_diff_q8 / 256.0;
+    /* Direct C→D link quality: only D's reception of C's frame */
+    double diff_direct = (double)to->twr.answer_rx.pwr_diff_q8 / 256.0;
 
-    if (diff_c_poll < 0.0) diff_c_poll = 0.0;
-    if (diff_d_poll < 0.0) diff_d_poll = 0.0;
-    if (diff_c_resp < 0.0) diff_c_resp = 0.0;
-    if (diff_d_resp < 0.0) diff_d_resp = 0.0;
-    if (diff_c_poll > PDIFF_MAX_DB) diff_c_poll = PDIFF_MAX_DB;
-    if (diff_d_poll > PDIFF_MAX_DB) diff_d_poll = PDIFF_MAX_DB;
-    if (diff_c_resp > PDIFF_MAX_DB) diff_c_resp = PDIFF_MAX_DB;
-    if (diff_d_resp > PDIFF_MAX_DB) diff_d_resp = PDIFF_MAX_DB;
+    #define CLAMP_PDIFF(x) do { if ((x) < 0.0) (x) = 0.0; \
+                                if ((x) > PDIFF_MAX_DB) (x) = PDIFF_MAX_DB; } while(0)
+    CLAMP_PDIFF(diff_c_poll);
+    CLAMP_PDIFF(diff_d_poll);
+    CLAMP_PDIFF(diff_c_resp);
+    CLAMP_PDIFF(diff_d_resp);
+    CLAMP_PDIFF(diff_direct);
+    #undef CLAMP_PDIFF
     #undef PDIFF_MAX_DB
 
-    double w_A = 0.0, w_B = 0.0;
+    double w_A = 0.0, w_B = 0.0, w_C = 0.0;
     if (valid_A) {
         double wC_A = 1.0 / (1.0 + diff_c_poll);
         double wD_A = 1.0 / (1.0 + diff_d_poll);
-        w_A = (wC_A < wD_A) ? wC_A : wD_A;
+        w_A = (wC_A < wD_A) ? wC_A : wD_A;   /* bottleneck */
     }
     if (valid_B) {
         double wC_B = 1.0 / (1.0 + diff_c_resp);
         double wD_B = 1.0 / (1.0 + diff_d_resp);
-        w_B = (wC_B < wD_B) ? wC_B : wD_B;
+        w_B = (wC_B < wD_B) ? wC_B : wD_B;   /* bottleneck */
+    }
+    if (valid_C) {
+        /* Direct measurement — weight solely by the C→D link quality */
+        w_C = 1.0 / (1.0 + diff_direct);
     }
 
     double tof_cd;
-    double w_sum = w_A + w_B;
+    double w_sum = w_A + w_B + w_C;
     if (w_sum > 0.0)
-        tof_cd = (tof_cd_A * w_A + tof_cd_B * w_B) / w_sum;
+        tof_cd = (tof_cd_A * w_A + tof_cd_B * w_B + tof_cd_C * w_C) / w_sum;
     else
-        tof_cd = valid_A ? tof_cd_A : tof_cd_B;
+        tof_cd = valid_A ? tof_cd_A : (valid_B ? tof_cd_B : tof_cd_C);
 
-    mprintf("[DIST3] %04X<->%04X: A=%.1f (w=%.3f) B=%.1f (w=%.3f) -> %.1f tks (%.3f m)\n",
+    mprintf("[DIST3] %04X<->%04X: A=%.1f(w=%.3f) B=%.1f(w=%.3f) C=%.1f(w=%.3f)"
+            " -> %.1f tks (%.3f m)\n",
             to->initiator_id, to->responder_id,
-            tof_cd_A, w_A, tof_cd_B, w_B,
+            tof_cd_A, w_A, tof_cd_B, w_B, tof_cd_C, w_C,
             tof_cd, (float)(tof_cd * METERS_PER_TICK));
 
     if (tof_cd < 0.0) tof_cd = 0.0;
-
     to->result_distance_tick = tof_cd;
-
-    if (to->result_distance_tick >= 0.0) {
-        uint64_t dt_obs = (obs_c->resp_rx.ts - obs_c->poll_rx.ts) & UWB_40BIT_MASK;
-        uint64_t T_round_CD = (to->twr.answer_rx.ts - to->twr.init_tx) & UWB_40BIT_MASK;
-        uint64_t T_reply_CD = (to->twr.answer_tx    - to->twr.init_tx) & UWB_40BIT_MASK;
-
-        if (dt_obs > 0 && T_reply_CD > 0) {
-            double k_cd_new = (double)(T_round_CD - (uint64_t)(2.0 * to->result_distance_tick))
-                            / (double)T_reply_CD;
-            double drift = fabs(k_cd_new - 1.0) * 1e6;
-            if (drift < 500.0) {
-                /* α = 0.05 — third-order is TDOA-derived, smooth aggressively */
-                k_ema_update(k_ac, k_cd_new, 0.05);
-                k_ema_update(k_bc, k_cd_new, 0.05);
-                mprintf("[K3] %04X<->%04X: k_cd=%.6f (%.1f ppm) α=0.05\n",
-                        to->initiator_id, to->responder_id, k_cd_new, drift);
-            } else {
-                mprintf("[WARN] K3 %04X<->%04X: k_cd=%.6f (%.1f ppm) implausible, skipped\n",
-                        to->initiator_id, to->responder_id, k_cd_new, drift);
-            }
-        }
-    }
 }
 
 
@@ -752,9 +744,9 @@ static int16_t los_offset(int16_t pwr_diff_q8) {
 
 /* ------------------------------------------------------------------ */
 
-uint8_t compute_certainty(MeasurementType type,
-                          float           t_gap_us,
-                          int16_t         pwr_diff_q8) {
+uint8_t compute_certainty(MeasurementType type, float t_gap_us,
+                          int16_t pwr_diff_q8, uint8_t unreliable_count) {
+
     if (type == MEAS_NONE) return 0;
 
     int16_t base, dt, dlos;
@@ -778,7 +770,9 @@ uint8_t compute_certainty(MeasurementType type,
             return 0;
     }
 
-    int16_t score = base + dt + dlos;
+    int16_t score = base + dt + dlos
+                  - (int16_t)(unreliable_count * CERTAINTY_UNRELIABLE_PENALTY);
+
     if (score < 1)   return 1;
     if (score > 254) return 254;
     return (uint8_t)score;
@@ -789,16 +783,15 @@ void distance_calculate(uwb_etwr_result_t result)
     uint32_t t_start = osKernelGetTickCount();
 
     if (result == UWB_TWR_RECEIVED) {
-        
+
         /* Build timestamp structures for this round */
         populate_computation_structs(&timestamps);
 
         /* ── 1. First order ───────────────────────────────────────────── */
-
         calculate_first_order_distance_ticks(&timestamps.first);
 
-        uint16_t id_A = timestamps.first.initiator_id;
-        uint16_t id_B = timestamps.first.responder_id;
+        uint16_t id_A   = timestamps.first.initiator_id;
+        uint16_t id_B   = timestamps.first.responder_id;
         double   tof_ab = timestamps.first.result_distance_tick;
 
         network_set_distance(id_A, id_B, dist_ticks_to_scale(tof_ab));
@@ -807,7 +800,13 @@ void distance_calculate(uwb_etwr_result_t result)
         int16_t avg_pwr_ab = (timestamps.first.twr.poll_rx.pwr_diff_q8
                             + timestamps.first.twr.resp_rx.pwr_diff_q8
                             + timestamps.first.twr.final_rx.pwr_diff_q8) / 3;
-        uint8_t cert_ab = compute_certainty(MEAS_DSTWR, 0, avg_pwr_ab);
+
+        uint8_t unrel_ab = (uint8_t)(timestamps.first.twr.poll_rx_unreliable  ? 1 : 0)
+                         + (uint8_t)(timestamps.first.twr.resp_rx_unreliable  ? 1 : 0)
+                         + (uint8_t)(timestamps.first.twr.final_rx_unreliable ? 1 : 0);
+
+        uint8_t cert_ab = compute_certainty(MEAS_DSTWR, 0, avg_pwr_ab, unrel_ab);
+
         network_update_certainty(id_A, id_B, cert_ab);
         network_update_certainty(id_B, id_A, cert_ab);
         mprintf("[TWR] 0x%04X<->0x%04X: %.3f m\n", id_A, id_B, tof_ab * METERS_PER_TICK);
@@ -835,51 +834,58 @@ void distance_calculate(uwb_etwr_result_t result)
                     entry_bc = &timestamps.second[j]; break;
                 }
             }
-            if (!entry_bc) { mprintf("[ERR] second-order: no B-C for C=0x%04X\n", id_C); continue; }
-
-            double k_A = network_get_k(id_A, id_C);
-            double k_B = network_get_k(id_B, id_C);
+            if (!entry_bc) {
+                mprintf("[ERR] second-order: no B-C for C=0x%04X\n", id_C);
+                continue;
+            }
 
             double prev_ac = dist_scale_to_ticks(network_get_distance(id_A, id_C));
             double prev_bc = dist_scale_to_ticks(network_get_distance(id_B, id_C));
 
             calculate_second_order_distances(entry_ac, entry_bc,
-                                            &timestamps.first,
-                                            prev_ac, prev_bc, &k_A, &k_B);
+                                             &timestamps.first,
+                                             prev_ac, prev_bc);
 
             network_set_distance(id_A, id_C, dist_ticks_to_scale(entry_ac->result_distance_tick));
             network_set_distance(id_C, id_A, dist_ticks_to_scale(entry_ac->result_distance_tick));
             network_set_distance(id_B, id_C, dist_ticks_to_scale(entry_bc->result_distance_tick));
             network_set_distance(id_C, id_B, dist_ticks_to_scale(entry_bc->result_distance_tick));
 
-            int16_t avg_pwr_bc = (entry_bc->twr.init_rx.pwr_diff_q8
-                                + entry_bc->twr.answer_rx.pwr_diff_q8) / 2;
-            uint64_t gap_bc = (entry_bc->twr.answer_rx.ts - entry_bc->twr.init_tx) & UWB_40BIT_MASK;
-            network_update_certainty(id_B, id_C,
-                compute_certainty(MEAS_SSTWR, (float)gap_bc * DWT_TICK_TO_US, avg_pwr_bc));
-            network_update_certainty(id_C, id_B,
-                compute_certainty(MEAS_SSTWR, (float)gap_bc * DWT_TICK_TO_US, avg_pwr_bc));
+            /* A-C certainty */
+            int16_t  avg_pwr_ac = (entry_ac->twr.init_rx.pwr_diff_q8
+                                 + entry_ac->twr.answer_rx.pwr_diff_q8) / 2;
+            uint64_t gap_ac     = (entry_ac->twr.answer_tx
+                                 - entry_ac->twr.init_rx.ts) & UWB_40BIT_MASK;
+            uint8_t  unrel_ac   = (uint8_t)(entry_ac->init_rx_unreliable   ? 1 : 0)
+                                + (uint8_t)(entry_ac->answer_rx_unreliable ? 1 : 0);
+            uint8_t  cert_ac    = compute_certainty(MEAS_SSTWR,
+                                                    (float)gap_ac * DWT_TICK_TO_US,
+                                                    avg_pwr_ac, unrel_ac);
+            network_update_certainty(id_A, id_C, cert_ac);
+            network_update_certainty(id_C, id_A, cert_ac);
 
-            int16_t avg_pwr_ac = (entry_ac->twr.init_rx.pwr_diff_q8
-                                + entry_ac->twr.answer_rx.pwr_diff_q8) / 2;
-            uint64_t gap_ac = (entry_ac->twr.answer_rx.ts - entry_ac->twr.init_tx) & UWB_40BIT_MASK;
-            network_update_certainty(id_A, id_C,
-                compute_certainty(MEAS_SSTWR, (float)gap_ac * DWT_TICK_TO_US, avg_pwr_ac));
-            network_update_certainty(id_C, id_A,
-                compute_certainty(MEAS_SSTWR, (float)gap_ac * DWT_TICK_TO_US, avg_pwr_ac));
+            /* B-C certainty */
+            int16_t  avg_pwr_bc = (entry_bc->twr.init_rx.pwr_diff_q8
+                                 + entry_bc->twr.answer_rx.pwr_diff_q8) / 2;
+            uint64_t gap_bc     = (entry_bc->twr.answer_tx
+                                 - entry_bc->twr.init_rx.ts) & UWB_40BIT_MASK;
+            uint8_t  unrel_bc   = (uint8_t)(entry_bc->init_rx_unreliable   ? 1 : 0)
+                                + (uint8_t)(entry_bc->answer_rx_unreliable ? 1 : 0);
+            uint8_t  cert_bc    = compute_certainty(MEAS_SSTWR,
+                                                    (float)gap_bc * DWT_TICK_TO_US,
+                                                    avg_pwr_bc, unrel_bc);
+            network_update_certainty(id_B, id_C, cert_bc);
+            network_update_certainty(id_C, id_B, cert_bc);
 
-            network_set_k(id_A, id_C, k_A);
-            network_set_k(id_B, id_C, k_B);
             processed_C[processed_count++] = id_C;
         }
 
-         /* ── 3. Third order ───────────────────────────────────────────── */
+        /* ── 3. Third order ───────────────────────────────────────────── */
         for (uint8_t t = 0; t < timestamps.third_count; t++) {
-            third_order_t *to = &timestamps.third[t];
-            uint16_t id_C3 = to->initiator_id;
-            uint16_t id_D  = to->responder_id;
+            third_order_t *to  = &timestamps.third[t];
+            uint16_t id_C3     = to->initiator_id;
+            uint16_t id_D      = to->responder_id;
 
-            /* Find second-order entries to get tof_ac, tof_bc, tof_ad, tof_bd */
             double tof_ac = -1.0, tof_bc = -1.0, tof_ad = -1.0, tof_bd = -1.0;
             for (uint8_t i = 0; i < timestamps.second_count; i++) {
                 const second_order_t *s = &timestamps.second[i];
@@ -889,37 +895,35 @@ void distance_calculate(uwb_etwr_result_t result)
                 if (s->initiator_id == id_B && s->responder_id == id_D)  tof_bd = s->result_distance_tick;
             }
 
-            double k_ac = network_get_k(id_A, id_C3);
-            double k_bc = network_get_k(id_B, id_C3);
-            double k_ad = network_get_k(id_A, id_D);
-            double k_bd = network_get_k(id_B, id_D);
-
             calculate_third_order_distance(to, &timestamps.first,
-                                            tof_ac, tof_bc, tof_ad, tof_bd,
-                                            &k_ac, &k_bc, &k_ad, &k_bd);
-
-            network_set_k(id_A, id_C3, k_ac);
-            network_set_k(id_B, id_C3, k_bc);
-            network_set_k(id_A, id_D,  k_ad);
-            network_set_k(id_B, id_D,  k_bd);
+                                           tof_ac, tof_bc, tof_ad, tof_bd);
 
             network_set_distance(id_C3, id_D, dist_ticks_to_scale(to->result_distance_tick));
             network_set_distance(id_D, id_C3, dist_ticks_to_scale(to->result_distance_tick));
 
-            int16_t worst_pwr_A = (to->twr_observation_c.poll_rx.pwr_diff_q8
-                                + to->twr_observation_d.poll_rx.pwr_diff_q8) / 2;
-            int16_t worst_pwr_B = (to->twr_observation_c.resp_rx.pwr_diff_q8
-                                + to->twr_observation_d.resp_rx.pwr_diff_q8) / 2;
-            int16_t avg_pwr_cd  = (worst_pwr_A + worst_pwr_B) / 2;
-            uint64_t gap_cd = (to->twr.answer_rx.ts - to->twr.init_tx) & UWB_40BIT_MASK;
-            uint8_t cert_cd = compute_certainty(MEAS_TDOA_SSTWR,
-                                                (float)gap_cd * DWT_TICK_TO_US, avg_pwr_cd);
+            /* D's turnaround (entirely on D's clock) and D's reception quality of C's frame */
+            uint64_t gap_cd  = (to->twr.answer_tx
+                              - to->twr.answer_rx.ts) & UWB_40BIT_MASK;
+            int16_t  pwr_cd  = to->twr.answer_rx.pwr_diff_q8;
+            uint8_t unrel_cd_raw =
+                (uint8_t)(to->twr_observation_c.poll_rx_unreliable ? 1 : 0)
+                + (uint8_t)(to->twr_observation_c.resp_rx_unreliable ? 1 : 0)
+                + (uint8_t)(to->twr_observation_d.poll_rx_unreliable ? 1 : 0)
+                + (uint8_t)(to->twr_observation_d.resp_rx_unreliable ? 1 : 0)
+                + (uint8_t)(to->answer_rx_unreliable                 ? 1 : 0);
+            uint8_t unrel_cd = (unrel_cd_raw > 3u) ? 3u : unrel_cd_raw;
+
+            uint8_t  cert_cd  = compute_certainty(MEAS_TDOA_SSTWR,
+                                                  (float)gap_cd * DWT_TICK_TO_US,
+                                                  pwr_cd, unrel_cd);
+
             network_update_certainty(id_C3, id_D, cert_cd);
             network_update_certainty(id_D, id_C3, cert_cd);
         }
+
         done:;
     }
-    /* Pad to exactly 10 ms from entry regardless of which path was taken */
+
     uint32_t elapsed = osKernelGetTickCount() - t_start;
     if (elapsed < 10U) osDelay(10U - elapsed);
 }

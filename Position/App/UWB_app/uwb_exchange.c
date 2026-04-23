@@ -464,7 +464,7 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
 
         msg_final_t final_msg = {
             .seq_num    = network_get_expected_seq_num(),
-            .poll_tx_ts = poll_tx,
+            .poll_tx_ts = calibrate_tx_timestamp(poll_tx),
         };
 
         uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 2);
@@ -575,7 +575,7 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
                         }
 
                         mprintf("[TWR] RESPONDER - 0x%04X\r\n", rx_msg.sender);
-                        network_store_resp_tx(resp_tx);
+                        network_store_resp_tx(calibrate_tx_timestamp(resp_tx));
 
                         uint64_t entries[NETWORK_MAX_PEERS - 2];
                         int16_t  entry_pwr_diff_q8[NETWORK_MAX_PEERS - 2];
@@ -1021,7 +1021,7 @@ static bool uwb_send_FINAL(uint8_t seq_num, uint16_t target_id, msg_final_t *fin
     uint64_t raw_aligned   = raw & 0xFFFFFFFE00ULL;
     uint64_t final_tx_exact = raw_aligned + tx_ant_delay;
 
-    final_msg->final_tx_ts = final_tx_exact;
+    final_msg->final_tx_ts = calibrate_tx_timestamp(final_tx_exact);
 
     msg_t tx_msg = {
         .type     = MSG_TYPE_FINAL,
@@ -1249,7 +1249,7 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
     uint64_t raw_aligned   = raw & 0xFFFFFFFE00ULL;
     uint64_t passive_tx_exact = raw_aligned + tx_ant_delay;
 
-    passive_msg->passive_tx_ts = passive_tx_exact;
+    passive_msg->passive_tx_ts = calibrate_tx_timestamp(passive_tx_exact);
 
     msg_t tx_msg = {
         .type     = MSG_TYPE_PASSIVE,

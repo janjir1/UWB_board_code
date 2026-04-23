@@ -67,3 +67,5 @@ uint64_t calibrate_rx_timestamp(uint64_t rx_timestamp,
                                 uint16_t target_id,
                                 bool *antenna_unreliable);
 
+uint64_t calibrate_tx_timestamp(uint64_t tx_timestamp);
+

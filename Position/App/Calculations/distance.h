@@ -32,6 +32,8 @@ uint64_t position_calibrate_timestamp(uint64_t orig_timestamp);
 #define VEL_HORIZ_MAX_MS      4.0f
 #define VEL_HORIZ_MS_PER_LSB  (VEL_HORIZ_MAX_MS / 255.0f)            /* ~15.7 mm/s */
 
+#define CERTAINTY_UNRELIABLE_PENALTY  20
+
 
 /*
  * CERTAINTY SYSTEM — UWB Position Measurement Quality Score
@@ -120,20 +122,23 @@ typedef enum {
  * Unused fields are zero-initialised and must not be read.
  */
 typedef struct {
-    uint64_t      poll_tx;  /**< Initiator: time POLL was transmitted. */
-    uwb_rx_meas_t poll_rx;  /**< Responder: POLL reception measurement. */
-
-    uint64_t      resp_tx;  /**< Responder: time RESPONSE was transmitted. */
-    uwb_rx_meas_t resp_rx;  /**< Initiator: RESPONSE reception measurement. */
-
-    uint64_t      final_tx; /**< Initiator: scheduled FINAL TX time (predicted). */
-    uwb_rx_meas_t final_rx; /**< Responder: FINAL reception measurement. */
+    uint64_t      poll_tx;
+    uwb_rx_meas_t poll_rx;
+    bool          poll_rx_unreliable;
+    uint64_t      resp_tx;
+    uwb_rx_meas_t resp_rx;
+    bool          resp_rx_unreliable;
+    uint64_t      final_tx;
+    uwb_rx_meas_t final_rx;
+    bool          final_rx_unreliable;
 } twr_timestamps_t;
 
 
 typedef struct {
-    uwb_rx_meas_t poll_rx;  /**< Reception measurement of the POLL frame. */
-    uwb_rx_meas_t resp_rx;  /**< Reception measurement of the RESPONSE frame. */
+    uwb_rx_meas_t poll_rx;
+    uwb_rx_meas_t resp_rx;
+    bool          poll_rx_unreliable;
+    bool          resp_rx_unreliable;
 } twr_observation_t;
 
 
@@ -164,29 +169,24 @@ typedef struct {
 } first_order_t;
 
 typedef struct {
-    uint16_t initiator_id;
-    uint16_t responder_id;
-
-    twr_observation_t twr_observation; 
-
-    ss_twr_t twr;     
-    
-    double result_distance_tick;
-
+    uint16_t       initiator_id;
+    uint16_t       responder_id;
+    twr_observation_t twr_observation;
+    ss_twr_t       twr;
+    bool           init_rx_unreliable;
+    bool           answer_rx_unreliable; 
+    double         result_distance_tick;
 } second_order_t;
 
 typedef struct {
-    uint16_t initiator_id;
-    uint16_t responder_id;
-
+    uint16_t          initiator_id;
+    uint16_t          responder_id;
     twr_observation_t twr_observation_c;
-    twr_observation_t twr_observation_d; 
-
-    ss_twr_t twr; 
-
-    double result_distance_tick;
-
-}  third_order_t;
+    twr_observation_t twr_observation_d;
+    ss_twr_t          twr;
+    bool              answer_rx_unreliable;
+    double            result_distance_tick;
+} third_order_t;
 
 typedef struct {
 

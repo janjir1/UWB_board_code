@@ -73,7 +73,6 @@ typedef struct {
 typedef struct {
     uint16_t peer_id;        /**< Network ID of the peer (0 = slot unused). */
     uint16_t distance_scaled;
-    double   k;              /**< Clock ratio  local/peer  (1.0 = uninitialised). */
     uint8_t  certainty;      /**< Certainty score for this peer's distance (0-255). */
 } node_peer_state_t;
 

@@ -120,3 +120,7 @@ uint64_t calibrate_rx_timestamp(uint64_t rx_timestamp,
     return ts;
 }
 
+uint64_t calibrate_tx_timestamp(uint64_t tx_timestamp)
+{
+    return (uint64_t)((float)tx_timestamp * calibrate_get_k());
+}

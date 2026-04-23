@@ -51,9 +51,6 @@ void network_init(uint16_t own_id)
     memset(&net, 0, sizeof(net));
     net.self.id = own_id;
     net.acknowledged = false;
-
-    for (uint8_t i = 0; i < NETWORK_MAX_PEERS; i++)
-        net.self.peers[i].k = 1.0;
 }
 
 /* -----------------------------------------------------------------------
@@ -68,10 +65,6 @@ void network_add_peer(uint16_t id)
     node_t *p = &net.peers[net.count];
     memset(p, 0, sizeof(node_t));
     p->id = id;
-
-    /* Seed k = 1.0 (uninitialised sentinel) for all peer slots */
-    for (uint8_t i = 0; i < NETWORK_MAX_PEERS; i++)
-        p->peers[i].k = 1.0;
 
     net.count++;
 }
@@ -90,7 +83,6 @@ void network_remove_peer(uint16_t id)
                 if (net.self.peers[j].peer_id == id) {
                     net.self.peers[j].certainty      = 0;
                     net.self.peers[j].distance_scaled = 0xFFFF;
-                    net.self.peers[j].k              = 1.0;
                     break;
                 }
             }
@@ -136,8 +128,6 @@ void network_update_peers_from_sync(uint16_t master_id,
             new_peers[new_count++] = *existing;
         } else {
             new_peers[new_count].id = master_id;
-            for (uint8_t j = 0; j < NETWORK_MAX_PEERS; j++)
-                new_peers[new_count].peers[j].k = 1.0;
             new_count++;
         }
     }
@@ -149,8 +139,6 @@ void network_update_peers_from_sync(uint16_t master_id,
             new_peers[new_count++] = *existing;
         } else {
             new_peers[new_count].id = peer_ids[i];
-            for (uint8_t j = 0; j < NETWORK_MAX_PEERS; j++)
-                new_peers[new_count].peers[j].k = 1.0;
             new_count++;
         }
     }
@@ -319,7 +307,6 @@ static node_peer_state_t *find_or_add_peer_slot(node_t *owner, uint16_t peer_id)
     for (uint8_t i = 0; i < NETWORK_MAX_PEERS; i++) {
         if (owner->peers[i].peer_id == 0) {
             owner->peers[i].peer_id = peer_id;
-            owner->peers[i].k       = 1.0;
             return &owner->peers[i];
         }
     }
@@ -381,8 +368,6 @@ uint16_t network_get_distance(uint16_t a, uint16_t b) {
     return s ? s->distance_scaled : 0xFFFF; 
 }
 
-void    network_set_k          (uint16_t a, uint16_t b, double k)  { node_peer_state_t *s = network_get_peer_state(a,b); if(s) s->k = k; }
-double  network_get_k         (uint16_t a, uint16_t b)            { node_peer_state_t *s = network_get_peer_state(a,b); return s ? s->k : 1.0; }
 void    network_bump_certainty (uint16_t a, uint16_t b)           { node_peer_state_t *s = network_get_peer_state(a,b); if(s && s->certainty < 255) s->certainty++; }
 void    network_reset_certainty(uint16_t a, uint16_t b)           { node_peer_state_t *s = network_get_peer_state(a,b); if(s) s->certainty = 0; }
 uint8_t network_get_certainty  (uint16_t a, uint16_t b)           { node_peer_state_t *s = network_get_peer_state(a,b); return s ? s->certainty : 0; }
