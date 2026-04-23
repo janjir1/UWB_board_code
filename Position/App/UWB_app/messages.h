@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 //#include "uwb_network.h"
 #include "DWM3000_driver.h"
@@ -156,6 +157,7 @@ typedef struct {
     uint64_t resp_rx_ts;        /**< Initiator's RX timestamp of the RESPONSE (40-bit). */
     uint64_t final_tx_ts;       /**< Predicted TX timestamp of this FINAL (40-bit). */
     int16_t  resp_pwr_diff_q8;      /**< RSSI measured by initiator on RESPONSE reception (Q8). */
+    bool resp_antenna_unreliable; /**< True if the RESPONSE frame was received with an unreliable antenna (e.g. due to blockage). */
 
     /* --- Preceding PASSIVE TX timestamps, in peer-list order --- */
     uint8_t  entry_count;                       /**< Number of valid entries in @c entries. */
@@ -204,9 +206,11 @@ typedef struct {
     /* --- Passive observations of the active TWR frames --- */
     uint64_t poll_rx_ts;    /**< RX timestamp of POLL at this passive node (40-bit). */
     int16_t  poll_pwr_diff_q8;   /**< RSSI of the received POLL at this node (Q8). */
+    bool poll_antenna_unreliable; /**< True if the POLL frame was received with an unreliable antenna (e.g. due to blockage). */
 
     uint64_t resp_rx_ts;    /**< RX timestamp of RESPONSE at this passive node (40-bit). */
     int16_t  resp_pwr_diff_q8;   /**< RSSI of the received RESPONSE at this node (Q8). */
+    bool resp_antenna_unreliable;
 
     /* --- This node's own PASSIVE transmission --- */
     uint64_t passive_tx_ts; /**< Predicted TX timestamp of this PASSIVE frame (40-bit). */

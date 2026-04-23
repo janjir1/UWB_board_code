@@ -38,19 +38,19 @@ static void k_ema_update(double *k, double k_new, double alpha)
         *k += alpha * (k_new - *k);              /* EMA: y += α*(x-y) */
 }
 
-static inline uint8_t vel_vert_to_u8(float v)
+uint8_t vel_vert_to_u8(float v)
 {
     float c = v < -VEL_VERT_RANGE_MS ? -VEL_VERT_RANGE_MS
             : v >  VEL_VERT_RANGE_MS ?  VEL_VERT_RANGE_MS : v;
     return (uint8_t)((c + VEL_VERT_RANGE_MS) / VEL_VERT_MS_PER_LSB + 0.5f);
 }
 
-static inline float vel_vert_u8_to_ms(uint8_t u)
+float vel_vert_u8_to_ms(uint8_t u)
 {
     return u * VEL_VERT_MS_PER_LSB - VEL_VERT_RANGE_MS;
 }
 
-static inline uint8_t vel_horiz_to_u8(float v)
+uint8_t vel_horiz_to_u8(float v)
 {
     /* take absolute value — direction not used */
     float c = v < 0.0f ? -v : v;
@@ -58,7 +58,7 @@ static inline uint8_t vel_horiz_to_u8(float v)
     return (uint8_t)(c / VEL_HORIZ_MS_PER_LSB + 0.5f);
 }
 
-static inline float vel_horiz_u8_to_ms(uint8_t u)
+float vel_horiz_u8_to_ms(uint8_t u)
 {
     return u * VEL_HORIZ_MS_PER_LSB;   /* always positive */
 }
@@ -79,15 +79,6 @@ void populate_computation_structs(timestamps_t *ts) {
 
     uint16_t initiator_id = network_get_master();
     uint16_t responder_id = network_get_ownid();
-
-    /* ── Read own IMU → encode to uint8_t → store into network state ── */
-    uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 2);
-    float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
-    if (!(flags & 0x80000000U) && (flags & 0x02U))
-        imu_get_results(&pitch_rad, &speed_horiz, &vel_z);
-
-    net->self.imu_vel_vert  = vel_vert_to_u8(vel_z);        /* float m/s → uint8_t */
-    net->self.imu_vel_horiz = vel_horiz_to_u8(speed_horiz);  /* float m/s → uint8_t */
 
     node_t *init_node = find_peer(initiator_id);
     if (init_node) {

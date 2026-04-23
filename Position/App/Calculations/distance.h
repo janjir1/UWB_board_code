@@ -203,3 +203,7 @@ typedef struct {
 
 uint16_t dist_ticks_to_scale(double ticks);
 double dist_scale_to_ticks(uint16_t encoded);
+uint8_t vel_vert_to_u8(float v);
+float vel_vert_u8_to_ms(uint8_t u);
+uint8_t vel_horiz_to_u8(float v);
+float vel_horiz_u8_to_ms(uint8_t u);

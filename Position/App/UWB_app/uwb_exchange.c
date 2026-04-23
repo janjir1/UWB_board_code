@@ -323,7 +323,8 @@ uwb_sync_result_t uwb_sync()
 
 static bool uwb_wait_for_RESPONSE(uint16_t target_id,
                                    uint64_t *out_resp_rx_ts,
-                                   int16_t *out_resp_pwr_diff_q8)
+                                   int16_t *out_resp_pwr_diff_q8,
+                                   bool *out_resp_antenna_unreliable)
 {
     dwm_rx_frame_t rx_frame = {0};
     uint32_t t_start = osKernelGetTickCount();
@@ -351,7 +352,9 @@ static bool uwb_wait_for_RESPONSE(uint16_t target_id,
                 if (!seq_ok(rx_msg.data.response.seq_num, "RESP"))
                     break;
 
-                *out_resp_rx_ts  = rx_frame.rx_timestamp;
+                *out_resp_rx_ts = calibrate_rx_timestamp(rx_frame.rx_timestamp,
+                                                         rx_frame.rssi_q8, rx_msg.sender, 
+                                                         out_resp_antenna_unreliable);
                 *out_resp_pwr_diff_q8 = rx_frame.rssi_q8 - rx_frame.fp_q8;
                 return true;
             }
@@ -398,9 +401,18 @@ static bool uwb_wait_for_FINAL()
                 if (!seq_ok(rx_msg.data.final.seq_num, "FINAL"))
                     break;
 
+                bool antenna_unreliable = false;
+
+                uwb_rx_meas_t final_meas = {
+                    .ts = calibrate_rx_timestamp(rx_frame.rx_timestamp,
+                                rx_frame.rssi_q8,
+                                rx_msg.sender,
+                                &antenna_unreliable),
+                    .pwr_diff_q8 = rx_frame.rssi_q8 - rx_frame.fp_q8
+                };
+
                 network_store_final(&rx_msg.data.final,
-                                    &(uwb_rx_meas_t){ .ts = rx_frame.rx_timestamp,
-                                                        .pwr_diff_q8 = rx_frame.rssi_q8 - rx_frame.fp_q8 });
+                                    &final_meas, antenna_unreliable);
                 return true;
             }
             mprintf("ERROR: unexpected msg 0x%02X from 0x%04X during FINAL wait\r\n",
@@ -455,9 +467,6 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
             .poll_tx_ts = poll_tx,
         };
 
-        if (!uwb_wait_for_RESPONSE(target_id, &final_msg.resp_rx_ts, &final_msg.resp_pwr_diff_q8))
-            return UWB_TWR_TIMEOUT;
-
         uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 2);
         float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
         if (!(flags & 0x80000000U) && (flags & 0x02))
@@ -468,12 +477,17 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
 
         calibrate_set_pitch(pitch_rad);
 
+        if (!uwb_wait_for_RESPONSE(target_id, &final_msg.resp_rx_ts,
+             &final_msg.resp_pwr_diff_q8, &final_msg.resp_antenna_unreliable))
+            return UWB_TWR_TIMEOUT;
+
+
         msg_passive_t passive_msgs[NETWORK_MAX_PEERS - 2];
         uwb_wait_for_PASSIVES(final_msg.entries, final_msg.entry_pwr_diff_q8, final_msg.entry_antenna_unreliable, 
                                final_msg.entry_id, &final_msg.entry_count,
                                passive_msgs, target_id);
 
-
+        //TODO are passive_msgs ever writen into final_msg?
 
         if (!uwb_send_FINAL(network_get_expected_seq_num(), target_id, &final_msg))
             return UWB_TWR_TX_FAILED;
@@ -525,10 +539,33 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
 
                     if (rx_msg.receiver == network_get_ownid()) {
                         /* ---- Responder path ---- */
-                        network_store_poll(&rx_msg.data.poll, &RX_MEAS_FROM_FRAME(rx_frame));
 
                         delay_us(50);
                         //osDelay(2);
+
+                        uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 2);
+                        float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
+                        if (!(flags & 0x80000000U) && (flags & 0x02))
+                            imu_get_results(&pitch_rad, &speed_horiz, &vel_z);
+
+                        network_t *net = network_get_network();
+
+                        net->self.imu_vel_vert  = vel_vert_to_u8(vel_z);
+                        net->self.imu_vel_horiz = vel_horiz_to_u8(speed_horiz);
+
+                        calibrate_set_pitch(pitch_rad);
+                        bool antenna_unreliable = false;
+
+                        uwb_rx_meas_t poll_meas = {
+                            .ts = calibrate_rx_timestamp(rx_frame.rx_timestamp,
+                                rx_frame.rssi_q8,
+                                rx_msg.sender,
+                                &antenna_unreliable),
+
+                            .pwr_diff_q8 = rx_frame.rssi_q8 - rx_frame.fp_q8
+                        };
+
+                        network_store_poll(&rx_msg.data.poll, &poll_meas, antenna_unreliable);
 
                         uint64_t resp_tx;
                         if (!uwb_send_RESPONSE(network_get_expected_seq_num(),
@@ -554,7 +591,7 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
                             network_store_passive(idx, &passive_msgs[idx],
                                                   &(uwb_rx_meas_t){ .ts = entries[idx],
                                                                     .pwr_diff_q8 = entry_pwr_diff_q8[idx] },
-                                                  entry_ids[idx]);
+                                                  entry_ids[idx], entry_antenna_unreliable[idx]);
                         }
 
                         if (!uwb_wait_for_FINAL()) {
@@ -565,27 +602,32 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
 
                     } else if (network_is_acknowledged()) {
                         /* ---- Passive observer path ---- */
-                        msg_passive_t passive_msg = {
-                            .seq_num      = rx_msg.data.poll.seq_num,
-                            .poll_rx_ts   = rx_frame.rx_timestamp,
-                            .poll_pwr_diff_q8 = rx_frame.rssi_q8 - rx_frame.fp_q8,
-                        };
-
-                        if (!uwb_wait_for_RESPONSE(rx_msg.receiver,
-                                                   &passive_msg.resp_rx_ts,
-                                                   &passive_msg.resp_pwr_diff_q8))
-                            return UWB_TWR_TIMEOUT;
 
                         uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 2);
                         float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
                         if (!(flags & 0x80000000U) && (flags & 0x02))
                             imu_get_results(&pitch_rad, &speed_horiz, &vel_z);
 
-
-                        passive_msg.IMU_vel_horiz = speed_horiz;
-                        passive_msg.IMU_vel_vert  = vel_z;
-
                         calibrate_set_pitch(pitch_rad);
+                        bool antenna_unreliable = false;
+                        msg_passive_t passive_msg = {
+                            .seq_num      = rx_msg.data.poll.seq_num,
+                            .poll_rx_ts   = calibrate_rx_timestamp(rx_frame.rx_timestamp,
+                                                                        rx_frame.rssi_q8,
+                                                                        rx_msg.sender,
+                                                                        &antenna_unreliable),
+                            .poll_pwr_diff_q8 = rx_frame.rssi_q8 - rx_frame.fp_q8,
+                            .poll_antenna_unreliable = antenna_unreliable,
+                            .IMU_vel_horiz = speed_horiz,
+                            .IMU_vel_vert  = vel_z
+                        };
+
+                        if (!uwb_wait_for_RESPONSE(rx_msg.receiver,
+                                                   &passive_msg.resp_rx_ts,
+                                                   &passive_msg.resp_pwr_diff_q8,
+                                                   &passive_msg.resp_antenna_unreliable))
+                            return UWB_TWR_TIMEOUT;
+
 
                         uwb_etwr_result_t result = uwb_send_PASSIVE(network_get_master(),
                                                                      rx_msg.receiver,

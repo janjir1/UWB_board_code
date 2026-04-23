@@ -15,6 +15,7 @@
 static float s_k = 0.0f;
 static float s_pitch_rad = 0.0f;
 
+//TODO we are not yet calibrating POLL and RESPONSE frames, only FINAL and PASSIVE
 
 void calibrate_set_clock_offset_sync(int16_t cfo)
 {

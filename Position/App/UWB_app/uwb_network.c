@@ -251,10 +251,11 @@ void network_reset_measurements(void)
 
 /* ---- POLL ---- */
 
-void network_store_poll(const msg_poll_t *msg, const uwb_rx_meas_t *rx)
+void network_store_poll(const msg_poll_t *msg, const uwb_rx_meas_t *rx, const bool antenna_unreliable)
 {
     net.measurements.poll    = *msg;
     net.measurements.poll_rx = *rx;
+    net.measurements.poll_antenna_unreliable = antenna_unreliable;
 }
 
 /* ---- RESPONSE TX (responder's own outgoing timestamp) ---- */
@@ -266,22 +267,24 @@ void network_store_resp_tx(uint64_t ts)
 
 /* ---- FINAL ---- */
 
-void network_store_final(const msg_final_t *msg, const uwb_rx_meas_t *rx)
+void network_store_final(const msg_final_t *msg, const uwb_rx_meas_t *rx, const bool antenna_unreliable)
 {
     net.measurements.final    = *msg;
     net.measurements.final_rx = *rx;
+    net.measurements.final_antenna_unreliable = antenna_unreliable;
 }
 
 /* ---- PASSIVE (one report per call, index = arrival order) ---- */
 
 bool network_store_passive(uint8_t index, const msg_passive_t *msg,
-                           const uwb_rx_meas_t *rx, const uint16_t device_id)
+                           const uwb_rx_meas_t *rx, const uint16_t device_id, const bool antenna_unreliable)
 {
     if (index >= NETWORK_MAX_PEERS - 2) return false;
     net.measurements.passive[index]    = *msg;
     net.measurements.passive_rx[index] = *rx;
     net.measurements.passive_count     = index + 1;
     net.measurements.passive_device_id[index] = device_id;
+    net.measurements.passive_antenna_unreliable[index] = antenna_unreliable;
     return true;
 }
 

@@ -41,17 +41,20 @@ typedef struct {
     //place to store decoded messeches of this exchange, for master only    
     msg_poll_t poll;
     uwb_rx_meas_t poll_rx;
+    bool poll_antenna_unreliable;
 
     msg_response_t resp;
     uint64_t   resp_tx;
 
     msg_final_t  final;
     uwb_rx_meas_t final_rx;
+    bool final_antenna_unreliable;
 
     uint8_t passive_count;
     msg_passive_t passive[NETWORK_MAX_PEERS - 2];
     uwb_rx_meas_t passive_rx[NETWORK_MAX_PEERS - 2];
     uint16_t passive_device_id[NETWORK_MAX_PEERS - 2];
+    bool passive_antenna_unreliable[NETWORK_MAX_PEERS - 2];
 
 } measurements_t;
 
@@ -290,11 +293,11 @@ uint16_t network_get_highest_uncertainty(void);
  * ----------------------------------------------------------------------- */
 
 void                  network_reset_measurements(void);
-void                  network_store_poll(const msg_poll_t *msg, const uwb_rx_meas_t *rx);
+void                  network_store_poll(const msg_poll_t *msg, const uwb_rx_meas_t *rx, const bool antenna_unreliable);
 void                  network_store_resp_tx(uint64_t ts);
-void                  network_store_final(const msg_final_t *msg, const uwb_rx_meas_t *rx);
+void                  network_store_final(const msg_final_t *msg, const uwb_rx_meas_t *rx, const bool antenna_unreliable);
 bool network_store_passive(uint8_t index, const msg_passive_t *msg,
-                           const uwb_rx_meas_t *rx, uint16_t device_id);
+                           const uwb_rx_meas_t *rx, const uint16_t device_id, const bool antenna_unreliable);
 uint8_t               network_get_passive_count(void);
 
 /**

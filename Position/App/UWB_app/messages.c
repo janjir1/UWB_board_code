@@ -182,6 +182,7 @@ static void msg_decode_final(const dwm_rx_frame_t *frame, msg_final_t *out)
     memcpy(&out->final_tx_ts,  p, MSG_TS_LEN);      p += MSG_TS_LEN;
 
     memcpy(&out->resp_pwr_diff_q8, p, sizeof(int16_t)); p += sizeof(int16_t);
+    out->resp_antenna_unreliable = (*p != 0); p += 1; 
 
     uint8_t wire_count = *p++;
     uint8_t count = wire_count > (NETWORK_MAX_PEERS - 2) ? (NETWORK_MAX_PEERS - 2) : wire_count;
@@ -288,9 +289,11 @@ static void msg_decode_passive(const dwm_rx_frame_t *frame, msg_passive_t *out)
 
     memcpy(&out->poll_rx_ts,   p, MSG_TS_LEN);       p += MSG_TS_LEN;
     memcpy(&out->poll_pwr_diff_q8, p, sizeof(int16_t));  p += sizeof(int16_t);
+    out->poll_antenna_unreliable = (*p != 0); p += 1;  
 
     memcpy(&out->resp_rx_ts,   p, MSG_TS_LEN);       p += MSG_TS_LEN;
     memcpy(&out->resp_pwr_diff_q8, p, sizeof(int16_t));  p += sizeof(int16_t);
+    out->resp_antenna_unreliable = (*p != 0); p += 1;
 
     /* final_rx_ts removed — PASSIVE now transmits before FINAL */
 
@@ -392,6 +395,7 @@ static uint16_t msg_encode_final(const msg_final_t *in, uint8_t *buf)
     u64_to_ts_buf(in->final_tx_ts, p); p += MSG_TS_LEN;
 
     memcpy(p, &in->resp_pwr_diff_q8, sizeof(int16_t)); p += sizeof(int16_t);
+    p[0] = in->resp_antenna_unreliable ? 1 : 0; p += 1;
 
     *p++ = in->entry_count;
     for (int i = 0; i < in->entry_count; i++) {
@@ -453,9 +457,11 @@ static uint16_t msg_encode_passive(const msg_passive_t *in, uint8_t *buf)
 
     u64_to_ts_buf(in->poll_rx_ts, p);       p += MSG_TS_LEN;
     memcpy(p, &in->poll_pwr_diff_q8, sizeof(int16_t));  p += sizeof(int16_t);
+    p[0] = in->poll_antenna_unreliable ? 1 : 0; p += 1;
 
     u64_to_ts_buf(in->resp_rx_ts, p);       p += MSG_TS_LEN;
     memcpy(p, &in->resp_pwr_diff_q8, sizeof(int16_t));  p += sizeof(int16_t);
+    p[0] = in->resp_antenna_unreliable ? 1 : 0; p += 1; 
 
     /* final_rx_ts removed */
     u64_to_ts_buf(in->passive_tx_ts, p); p += MSG_TS_LEN;
