@@ -1,5 +1,6 @@
 #include <string.h>
 #include <stdio.h>
+#include "cmsis_os2.h"
 #include "lsm6dsv_reg.h"
 #include "lsm6dsv_platform.h"
 #include "../Generic/my_print.h"
@@ -80,8 +81,14 @@ void imu_init(void)
 
     uint8_t whoamI = 0;
     lsm6dsv_device_id_get(&dev_ctx, &whoamI);
-    if (whoamI != LSM6DSV_ID)
-        while (1);
+    
+    if (whoamI != LSM6DSV_ID){
+       mprintf("ERROR: lsm6dsv device id not detected");
+        vTaskDelete( NULL );
+        while(1) {
+            osDelay(5000);
+         }
+    }
 
     lsm6dsv_sw_por(&dev_ctx);
     platform_delay(IMU_BOOT_TIME_MS);  /* wait for reset to complete */

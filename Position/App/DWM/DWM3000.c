@@ -65,6 +65,11 @@ uint32_t tx_err_watchdog(uwb_sync_result_t result_sync,
         tx_fail_count = 0; 
     }
 
+    if (sleep_time > 5000) {
+        mprintf("WARNING: Invalid sleep time %lu detected. Defaulting to DEEP_SLEEP.\r\n", sleep_time);
+        return DEEP_SLEEP - 50;
+    }
+
     return sleep_time;
 }
 

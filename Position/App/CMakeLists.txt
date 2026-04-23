@@ -6,7 +6,7 @@ add_library(app STATIC
     Accelerometer/imu.c
 
     # Blink
-    Blink/blink.cpp
+    Blink/blink.c
 
     # Generic utilities
     Generic/my_print.c
@@ -34,6 +34,7 @@ target_include_directories(app PUBLIC
 target_link_libraries(app PUBLIC
     dw3000
     lsm6dsv
+    m
 )
 
 # HAL + FreeRTOS + device defines

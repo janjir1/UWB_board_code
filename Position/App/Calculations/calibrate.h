@@ -37,10 +37,6 @@
 /* Donut pattern exponent. n=2 for dipole-like pattern. */
 #define CALIB_ANTENNA_N                     2.0f
 
-/* Timestamp correction slope for antenna null region (ticks per dB).
- * TODO: measure empirically. Zero = math runs but no correction applied. */
-#define CALIB_ANTENNA_A                     0.0f
-
 /**
  * @brief Overwrite k from scratch using a single CFO sample.
  * @param cfo  Raw dwt_readclockoffset() value.

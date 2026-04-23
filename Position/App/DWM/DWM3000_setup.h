@@ -19,7 +19,7 @@
 #define DWM_UWB_PDOA_MODE     DWT_PDOA_M0
 
 #define TX_RF_PGdly    0x34
-#define TX_RF_Power    0xfdfdfdfd
+#define TX_RF_Power    0xfefefefe
 #define TX_RF_PGcount  0
 
 #define DWM_IRQ_MASK  (DWT_INT_RXFCG_BIT_MASK  |  \

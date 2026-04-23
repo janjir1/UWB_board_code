@@ -487,7 +487,7 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
                                final_msg.entry_id, &final_msg.entry_count,
                                passive_msgs, target_id);
 
-        //TODO are passive_msgs ever writen into final_msg?
+        //TODO are passive_msgs ever writen into final_msg? - it doesnt need to be - so why is it defined?
 
         if (!uwb_send_FINAL(network_get_expected_seq_num(), target_id, &final_msg))
             return UWB_TWR_TX_FAILED;
@@ -684,12 +684,6 @@ void uwb_build_share(msg_share_t *out, uint8_t seq, uint32_t sleep_time)
     }
     out->node_count = n;
 
-    /* ---> DIAGNOSTIC MPRINTF FOR BUG 3 <--- */
-    mprintf("[DIAG_SHARE] Building SHARE msg. Nodes (%u): ", out->node_count);
-    for (uint8_t d = 0; d < out->node_count; d++) {
-        mprintf("0x%04X ", out->node_ids[d]);
-    }
-    mprintf("\r\n");
     /* -------------------------------------- */
 
     /* ── Per-node IMU velocities ── */
@@ -1277,4 +1271,7 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
 
     mprintf("[PASSIVE] sent idx=%d entries=%d\r\n", my_idx, passive_msg->entry_count);
     return UWB_TWR_RECEIVED_PASSIVE;
+
+    //TODO pad to length - now if c transmits and goes to listen to share - might timeout, 
+    // since we can still be transmiting passives - this problem will be visible on larger networks
 }

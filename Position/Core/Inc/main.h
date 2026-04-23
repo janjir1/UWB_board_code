@@ -114,6 +114,7 @@ extern SPI_HandleTypeDef hspi1;
 extern UART_HandleTypeDef huart1;
 extern USART_HandleTypeDef husart2;
 extern TIM_HandleTypeDef htim2;
+extern IWDG_HandleTypeDef hiwdg;
 
 extern osThreadId_t AccelerometerHandle;
 extern osThreadId_t RangingHandle;
