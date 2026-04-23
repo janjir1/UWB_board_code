@@ -83,6 +83,7 @@ typedef struct {
     uint8_t  imu_vel_vert;
     uint8_t  imu_vel_horiz;
     node_peer_state_t peers[NETWORK_MAX_PEERS];
+
 } node_t;
 
 /* -----------------------------------------------------------------------

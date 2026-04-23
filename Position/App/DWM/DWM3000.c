@@ -20,6 +20,7 @@
 #include "../UWB_app/uwb_exchange.h"
 #include "../UWB_app/uwb_network.h"
 #include "../Calculations/distance.h"
+#include "../Calculations/ekf.h"
 
 #define U64_HI(x)  ((uint32_t)((x) >> 32))
 #define U64_LO(x)  ((uint32_t)((x) & 0xFFFFFFFFU))
@@ -117,6 +118,7 @@ void StartRangingTask(void *argument) {
     //msg_run_tests();
 
     network_init(dwm_get_addr());
+    ekf_init();
 
     osThreadFlagsWait(0x01, osFlagsWaitAll, osWaitForever);
     //uint8_t timer = 0;
@@ -131,6 +133,7 @@ void StartRangingTask(void *argument) {
         uint32_t sleep_time = uwb_share (result_etwr, DEEP_SLEEP); 
         sleep_time = tx_err_watchdog(result_sync, result_etwr, sleep_time);
         HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
+        ekf_step(0, 0);//TODO update EKF with new distance measurements before sleeping
         dwm_sleep();
         osDelay(sleep_time);
     }
