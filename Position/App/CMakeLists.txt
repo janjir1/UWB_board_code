@@ -2,7 +2,7 @@ add_library(app STATIC
     # Accelerometer
     Accelerometer/lsm6dsv.c
     Accelerometer/lsm6dsv_self_test.c
-    Accelerometer/read_data_polling.c
+    #Accelerometer/read_data_polling.c
     Accelerometer/imu.c
 
     # Blink

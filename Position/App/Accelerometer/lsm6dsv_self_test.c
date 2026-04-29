@@ -95,7 +95,18 @@ bool SelfTest(void)
   dev_ctx.write_reg = platform_write;
   dev_ctx.read_reg = platform_read;
   dev_ctx.mdelay = platform_delay;
-  dev_ctx.handle = &hi2c1;
+  #ifdef UWB_BOARD_V1_1
+
+      static lsm6dsv_spi_handle_t spi_handle = {
+      .hspi    = &hspi2,
+      .cs_port = SPI2_CS_GPIO_Port,   
+      .cs_pin  = SPI2_CS_Pin,
+      };
+
+      dev_ctx.handle    = &spi_handle;
+  #else
+      dev_ctx.handle    = &hi2c1;
+  #endif
 
   /* Init test platform */
   platform_init();

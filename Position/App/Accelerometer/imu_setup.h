@@ -27,7 +27,7 @@
  *   LSM6DSV_ODR_AT_60Hz   →  ~12 samples,   I2C Fast ~4.5ms
  *   LSM6DSV_ODR_AT_120Hz  →  ~24 samples,   I2C Fast ~8.5ms  (SPI recommended)
  */
-#define IMU_XL_ODR              LSM6DSV_ODR_AT_15Hz
+#define IMU_XL_ODR              LSM6DSV_ODR_AT_480Hz
 
 /* Full scale — maximum measurable acceleration
  *   LSM6DSV_2g   → 0.061 mg/LSB  best precision, clips above 2g  ← current
@@ -46,7 +46,7 @@
  *   LSM6DSV_XL_STRONG        → ODR/9   ← current (good for 7.5–30 Hz)
  *   LSM6DSV_XL_VERY_STRONG   → ODR/20
  */
-#define IMU_XL_LP2_BW           LSM6DSV_XL_STRONG
+#define IMU_XL_LP2_BW           LSM6DSV_XL_ULTRA_LIGHT
 
 
 /* ── Gyroscope ───────────────────────────────────────────────────── */
@@ -54,7 +54,7 @@
 /* Output data rate — should match IMU_XL_ODR in most cases
  * Same options as accel ODR above.
  */
-#define IMU_GY_ODR              LSM6DSV_ODR_AT_15Hz
+#define IMU_GY_ODR              LSM6DSV_ODR_AT_480Hz
 
 /* Full scale — maximum measurable angular rate
  *   LSM6DSV_125dps   → 4.375 mdps/LSB  highest precision
@@ -86,7 +86,7 @@
  *   LSM6DSV_SFLP_60Hz
  *   LSM6DSV_SFLP_120Hz
  */
-#define IMU_SFLP_ODR            LSM6DSV_SFLP_15Hz
+#define IMU_SFLP_ODR            LSM6DSV_SFLP_120Hz
 
 /* Which SFLP outputs to batch into FIFO */
 #define IMU_SFLP_BATCH_QUAT     PROPERTY_ENABLE   // game rotation quaternion x,y,z
@@ -100,8 +100,8 @@
  * Accel options: LSM6DSV_XL_NOT_BATCHED, LSM6DSV_XL_BATCHED_AT_7Hz5 ... _AT_240Hz
  * Gyro options:  LSM6DSV_GY_NOT_BATCHED, LSM6DSV_GY_BATCHED_AT_7Hz5 ... _AT_240Hz
  */
-#define IMU_FIFO_XL_BATCH       LSM6DSV_XL_BATCHED_AT_15Hz
-#define IMU_FIFO_GY_BATCH       LSM6DSV_GY_BATCHED_AT_15Hz
+#define IMU_FIFO_XL_BATCH       LSM6DSV_XL_BATCHED_AT_480Hz
+#define IMU_FIFO_GY_BATCH       LSM6DSV_GY_BATCHED_AT_480Hz
 
 /* Timestamp decimation — how often a timestamp entry appears in FIFO
  * relative to the accel/gyro batch rate.
@@ -121,7 +121,7 @@
  */
 #define IMU_MAX_SAMPLES         32
 
-#define IMU_CAL_SAMPLES   16    /* ~2s at 7.5 Hz */
-#define IMU_CAL_ODR_HZ    7     /* approximate ODR for delay calc */
+#define IMU_CAL_SAMPLES   512    /* ~2s at 7.5 Hz */
+#define IMU_CAL_ODR_HZ    480     /* approximate ODR for delay calc */
 
 #endif /* IMU_SETUP_H */

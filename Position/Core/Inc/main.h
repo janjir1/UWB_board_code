@@ -66,8 +66,8 @@ void Error_Handler(void);
 #define DWM_EXTI_Pin GPIO_PIN_0
 #define DWM_EXTI_GPIO_Port GPIOA
 #define DWM_EXTI_EXTI_IRQn EXTI0_IRQn
-#define ChipSelect_Pin GPIO_PIN_1
-#define ChipSelect_GPIO_Port GPIOA
+#define SPI1_CS_DWM_Pin GPIO_PIN_1
+#define SPI1_CS_DWM_GPIO_Port GPIOA
 #define USART2_TX_Master_Pin GPIO_PIN_2
 #define USART2_TX_Master_GPIO_Port GPIOA
 #define USART_RX_Master_Pin GPIO_PIN_3
@@ -82,6 +82,8 @@ void Error_Handler(void);
 #define USB_CC1_A_Sense_GPIO_Port GPIOA
 #define PB0_Pin GPIO_PIN_0
 #define PB0_GPIO_Port GPIOB
+#define SPI2_CS_Pin GPIO_PIN_12
+#define SPI2_CS_GPIO_Port GPIOB
 #define USART1_TX_DEBUG_Pin GPIO_PIN_9
 #define USART1_TX_DEBUG_GPIO_Port GPIOA
 #define USART1_RX_Debug_Pin GPIO_PIN_10
@@ -108,11 +110,21 @@ void Error_Handler(void);
 #define I2C1_SDA_ACC_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
+
+#define UWB_BOARD_V1_1
+
 extern ADC_HandleTypeDef hadc1;
-extern I2C_HandleTypeDef hi2c1;
+
+#ifdef UWB_BOARD_V1_1
+  extern SPI_HandleTypeDef hspi2;
+#else
+  extern I2C_HandleTypeDef hi2c1;
+  extern USART_HandleTypeDef husart2;
+#endif
+
+
 extern SPI_HandleTypeDef hspi1;
 extern UART_HandleTypeDef huart1;
-extern USART_HandleTypeDef husart2;
 extern TIM_HandleTypeDef htim2;
 extern IWDG_HandleTypeDef hiwdg;
 
@@ -120,6 +132,7 @@ extern osThreadId_t AccelerometerHandle;
 extern osThreadId_t RangingHandle;
 
 #define UWB_DEBUG
+
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

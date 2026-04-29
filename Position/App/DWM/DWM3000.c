@@ -75,6 +75,7 @@ uint32_t tx_err_watchdog(uwb_sync_result_t result_sync,
 }
 
 void StartRangingTask(void *argument) {
+    osDelay(5000);
     mprintf("Starting DWM3000 task\r\n");
     bool passed = dwm_init();
     if (passed) {

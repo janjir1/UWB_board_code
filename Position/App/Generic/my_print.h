@@ -5,14 +5,20 @@
 extern "C" {
 #endif
 
+
+#include "main.h"
+
 #define STlink 1
 #define USB_CDC 2
 #define Both 3
 
 // ---- Change this to select output method ----
-#define PRINT_MODE Both
+#ifdef UWB_BOARD_V1_1
+    #define PRINT_MODE USB_CDC
+#else
+    #define PRINT_MODE Both
+#endif
 
-#include "main.h"
 
 // Function Prototype
 void mprintf(const char *format, ...);

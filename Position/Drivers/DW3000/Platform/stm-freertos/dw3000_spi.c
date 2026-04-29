@@ -44,8 +44,8 @@ extern SPI_HandleTypeDef        DW3000_SPI_HANDLE;
  * CS pin — must match the defines in dw3000_hw.c.
  * Tip: put both in a shared dw3000_config.h to avoid duplication.
  */
-#define DW3000_CS_GPIO_Port     ChipSelect_GPIO_Port/* e.g. GPIOA */
-#define DW3000_CS_Pin           ChipSelect_Pin            /* e.g. GPIO_PIN_4 */
+#define DW3000_CS_GPIO_Port     SPI1_CS_DWM_GPIO_Port/* e.g. GPIOA */
+#define DW3000_CS_Pin           SPI1_CS_DWM_Pin            /* e.g. GPIO_PIN_4 */
 
 /* SPI baud rate prescaler — see table above */
 #define DW3000_SPI_PRESCALER_SLOW   SPI_BAUDRATEPRESCALER_32

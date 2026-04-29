@@ -7,6 +7,7 @@
 #include "imu_setup.h"
 #include "lsm6dsv_ST_example.h"
 #include "imu.h"
+#include "main.h"
 
 #define    BOOT_TIME            10 //ms
 
@@ -21,7 +22,7 @@ static bool  s_calibrated    = false;
 void imu_calibrate(void)
 {
     float acc[3] = {0.0f, 0.0f, 0.0f};
-    uint8_t n    = 0;
+    uint16_t n    = 0;
 
     /* Flush any stale FIFO entries first */
     lsm6dsv_fifo_status_t status;
@@ -35,7 +36,7 @@ void imu_calibrate(void)
     HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
     while (n < IMU_CAL_SAMPLES)
     {
-        platform_delay(100 / IMU_CAL_ODR_HZ);  /* wait ~1 ODR period */
+        platform_delay(1000u / IMU_CAL_ODR_HZ + 1u);
 
         imu_fifo_data_t fifo;
         imu_read_fifo(&fifo);
@@ -75,7 +76,18 @@ void imu_init(void)
     dev_ctx.write_reg = platform_write;
     dev_ctx.read_reg  = platform_read;
     dev_ctx.mdelay    = platform_delay;
-    dev_ctx.handle    = &hi2c1;
+    #ifdef UWB_BOARD_V1_1
+
+        static lsm6dsv_spi_handle_t spi_handle = {
+        .hspi    = &hspi2,
+        .cs_port = SPI2_CS_GPIO_Port,   
+        .cs_pin  = SPI2_CS_Pin,
+        };
+
+        dev_ctx.handle    = &spi_handle;
+    #else
+        dev_ctx.handle    = &hi2c1;
+    #endif
 
     platform_delay(IMU_BOOT_TIME_MS);
 
