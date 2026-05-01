@@ -89,6 +89,7 @@ static inline void msg_decode_log(const dwm_rx_frame_t *f, msg_t *m)
 {
     msg_decode(f, m);
     mprintf(">%s %04X->%04X\r\n", msg_type_str(m->type), m->sender, m->receiver);
+
 }
 
 static inline dwm_tx_frame_t msg_encode_log(const msg_t *m)
@@ -120,9 +121,14 @@ static void delay_us(uint32_t us)
  *
  * @param device_id This device's 16-bit network ID.
  */
-static void uwb_id_delay(uint16_t device_id)
+static void uwb_id_delay(uint16_t short_addr)
 {
-    uint32_t total_us = ((device_id & 0xFF) ^ (device_id >> 8)) % 10000;
+    // Low byte is now uniformly spread 0–255 across all devices
+    uint8_t low = (uint8_t)(short_addr & 0xFF);
+
+    // Scale to 0–10000 µs
+    uint32_t total_us = ((uint32_t)low * 10000) / 255;
+
     uint32_t ms = total_us / 1000;
     uint32_t us = total_us % 1000;
 
@@ -279,7 +285,7 @@ uwb_sync_result_t uwb_sync()
 
                 switch (rx_msg.type) {
 
-                case MSG_TYPE_SYNC:
+                case MSG_TYPE_SYNC:{
                     if (rx_msg.receiver == ALL_ID) {
 
                         uint32_t t_start = osKernelGetTickCount();
@@ -287,7 +293,11 @@ uwb_sync_result_t uwb_sync()
                         calibrate_set_clock_offset_sync(clock_offset);
 
                         if (rx_msg.sender != network_get_master()) {
+                            network_set_master(rx_msg.sender);
+
+                            /*
                             if (rx_msg.sender > network_get_master()) {
+                                
                                 network_set_master(rx_msg.sender);
                                 network_update_peers_from_sync(rx_msg.sender,
                                                                rx_msg.data.sync.peer_ids,
@@ -299,6 +309,7 @@ uwb_sync_result_t uwb_sync()
                                         rx_msg.sender, network_get_master());
                                 break;
                             }
+                                */
                         } else {
                             network_update_peers_from_sync(rx_msg.sender,
                                                            rx_msg.data.sync.peer_ids,
@@ -323,10 +334,24 @@ uwb_sync_result_t uwb_sync()
                         }
                     }
                     break;
-
-                default:
-                    break;
                 }
+                case MSG_TYPE_POLL:     
+                case MSG_TYPE_FINAL:
+                    network_set_master(rx_msg.receiver);
+                    osDelay(DEEP_SLEEP-10);
+                    break;
+
+                case MSG_TYPE_RESPONSE:
+                case MSG_TYPE_SHARE:
+                    network_set_master(rx_msg.sender);
+                    osDelay(DEEP_SLEEP-10);
+                    break;  
+
+                case MSG_TYPE_PASSIVE:    
+                default: 
+                    break;
+            
+            }
                 break;
             }
 
@@ -562,6 +587,8 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
                     if (rx_msg.sender != network_get_master()) {
                         mprintf("ERROR: POLL from unexpected sender 0x%04X (master: 0x%04X)\r\n",
                                 rx_msg.sender, network_get_master());
+                                network_set_master(rx_msg.receiver);
+                                osDelay(DEEP_SLEEP-10);
                         return UWB_TWR_UNEXPECTED_MASTER;
                     }
 
@@ -880,6 +907,25 @@ uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)
                 }
                 mprintf("ERROR: unexpected msg 0x%02X during SHARE wait\r\n",
                         rx_msg.type);
+                    switch (rx_msg.type) {
+                        
+                        case MSG_TYPE_POLL:     
+                        case MSG_TYPE_FINAL:
+                            network_set_master(rx_msg.receiver);
+                            osDelay(DEEP_SLEEP-10);
+                            break;
+
+                        case MSG_TYPE_RESPONSE:
+                        case MSG_TYPE_SHARE:
+                            network_set_master(rx_msg.sender);
+                            osDelay(DEEP_SLEEP-10);
+                            break;  
+
+                        case MSG_TYPE_PASSIVE:
+                        case MSG_TYPE_SYNC:    
+                        default: 
+                            break;
+                            }
                 break;
             }
             case DWM_RX_ERR:

@@ -206,6 +206,23 @@ bool dwm_init_queues(void)
     return true;
 }
 
+static uint16_t uwb_generate_short_addr(void)
+{
+    uint32_t w0 = HAL_GetUIDw0();
+    uint32_t w1 = HAL_GetUIDw1();
+    uint32_t w2 = HAL_GetUIDw2();
+
+    // Mix all 3 words together — avoids clustering from same-batch devices
+    uint32_t h = w0 ^ (w1 * 2654435761UL) ^ (w2 * 2246822519UL);
+
+    // Murmur finalizer — avalanche effect so close inputs diverge
+    h ^= h >> 16;
+    h *= 0x45d9f3bUL;
+    h ^= h >> 16;
+
+    return (uint16_t)(h & 0xFFFF);
+}
+
 /*! ------------------------------------------------------------------------------------------------------------------
  * @brief Configure the DW3000 UWB radio and TX RF parameters, derive and assign the short address,
  *        initialise queues, and apply runtime settings.
@@ -245,7 +262,7 @@ bool dwm_configure(void)
     }
     dwt_configuretxrf((dwt_txconfig_t *)&tx_config);
 
-    s_short_addr = (uint16_t)((HAL_GetUIDw0() ^ HAL_GetUIDw1()) & 0xFFFF);
+    s_short_addr = uwb_generate_short_addr();
     mprintf("Short addr: 0x%04X\r\n", s_short_addr);
 
     if (!dwm_init_queues()) return false;
