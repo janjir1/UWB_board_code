@@ -13,8 +13,9 @@ extern USBD_HandleTypeDef hUsbDeviceFS;
 
 
 typedef struct {
-    char data[PRINT_BUF_SIZE];
+    uint32_t tick;                  // raw, unformatted
     uint16_t len;
+    char     data[PRINT_BUF_SIZE];
 } print_msg_t;
 
 static osMessageQueueId_t s_print_queue = NULL;
@@ -32,23 +33,15 @@ void mprintf(const char *format, ...)
 {
     print_msg_t msg;
 
-    /* Prepend timestamp */
-    uint32_t tick = osKernelGetTickCount();
-    int prefix_len = snprintf(msg.data, PRINT_BUF_SIZE, "[%8lu] ", tick);
-    if (prefix_len < 0) prefix_len = 0;
-
-    /* Append formatted message into remaining buffer space */
     va_list args;
     va_start(args, format);
-    int body_len = vsnprintf(msg.data + prefix_len,
-                             PRINT_BUF_SIZE - prefix_len,
-                             format, args);
+    int len = vsnprintf(msg.data, sizeof(msg.data), format, args);
     va_end(args);
 
-    if (body_len <= 0) return;
+    if (len <= 0) return;
 
-    int total = prefix_len + body_len;
-    msg.len = (uint16_t)(total < PRINT_BUF_SIZE ? total : PRINT_BUF_SIZE - 1);
+    msg.tick = osKernelGetTickCount();   // cheap, no formatting
+    msg.len  = (uint16_t)(len < sizeof(msg.data) ? len : sizeof(msg.data) - 1);
 
     osMessageQueuePut(s_print_queue, &msg, 0, 0);
 }
@@ -77,14 +70,18 @@ void PrintTask(void *arg)
     if (hUsbDeviceFS.dev_state == USBD_STATE_CONFIGURED &&
         hUsbDeviceFS.pClassData != NULL)                   // ← NULL check
     {
-        memcpy(cdc_tx_buf, msg.data, msg.len);
+        uint8_t prefix[12];
+        int plen = snprintf((char *)prefix, sizeof(prefix), "[%8lu] ", msg.tick);
+        memcpy(cdc_tx_buf,         prefix,   plen);
+        memcpy(cdc_tx_buf + plen,  msg.data, msg.len);
+        uint16_t total = plen + msg.len;
 
         /* Wrap in critical section so USB disconnect can't tear down
          * endpoints between our state check and the actual transmit */
         taskENTER_CRITICAL();
         uint8_t usb_ok = (hUsbDeviceFS.dev_state == USBD_STATE_CONFIGURED &&
                           hUsbDeviceFS.pClassData != NULL);
-        if (usb_ok) CDC_Transmit_FS(cdc_tx_buf, msg.len);
+        if (usb_ok) CDC_Transmit_FS(cdc_tx_buf, total);
         taskEXIT_CRITICAL();
     }
 #endif

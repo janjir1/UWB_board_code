@@ -70,6 +70,34 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
             (label), U64_HI(val), U64_LO(val))
 
 /* -----------------------------------------------------------------------
+ * Message logging helpers
+ * ----------------------------------------------------------------------- */
+static const char *msg_type_str(uint8_t t)
+{
+    switch (t) {
+    case MSG_TYPE_SYNC:     return "SYN";
+    case MSG_TYPE_POLL:     return "POL";
+    case MSG_TYPE_RESPONSE: return "RSP";
+    case MSG_TYPE_FINAL:    return "FIN";
+    case MSG_TYPE_PASSIVE:  return "PAS";
+    case MSG_TYPE_SHARE:    return "SHR";
+    default:                return "???";
+    }
+}
+
+static inline void msg_decode_log(const dwm_rx_frame_t *f, msg_t *m)
+{
+    msg_decode(f, m);
+    mprintf(">%s %04X->%04X\r\n", msg_type_str(m->type), m->sender, m->receiver);
+}
+
+static inline dwm_tx_frame_t msg_encode_log(const msg_t *m)
+{
+    mprintf("<%s %04X->%04X\r\n", msg_type_str(m->type), m->sender, m->receiver);
+    return msg_encode(m);
+}
+
+/* -----------------------------------------------------------------------
  * Internal helpers
  * ----------------------------------------------------------------------- */
 
@@ -198,7 +226,7 @@ uwb_sync_result_t uwb_sync()
             switch (rx_frame.type) {
             case DWM_RX_OK: {
                 msg_t rx_msg;
-                msg_decode(&rx_frame, &rx_msg);
+                msg_decode_log(&rx_frame, &rx_msg);
 
                 if (rx_msg.type != MSG_TYPE_SYNC) {
                     mprintf("ERROR: unexpected msg 0x%02X in SYNC window\r\n", rx_msg.type);
@@ -247,7 +275,7 @@ uwb_sync_result_t uwb_sync()
             switch (rx_frame.type) {
             case DWM_RX_OK: {
                 msg_t rx_msg;
-                msg_decode(&rx_frame, &rx_msg);
+                msg_decode_log(&rx_frame, &rx_msg);
 
                 switch (rx_msg.type) {
 
@@ -343,7 +371,7 @@ static bool uwb_wait_for_RESPONSE(uint16_t target_id,
         switch (rx_frame.type) {
         case DWM_RX_OK: {
             msg_t rx_msg;
-            msg_decode(&rx_frame, &rx_msg);
+            msg_decode_log(&rx_frame, &rx_msg);
 
             if (rx_msg.type == MSG_TYPE_RESPONSE &&
                 rx_msg.receiver == network_get_master() &&
@@ -392,7 +420,7 @@ static bool uwb_wait_for_FINAL()
         switch (rx_frame.type) {
         case DWM_RX_OK: {
             msg_t rx_msg;
-            msg_decode(&rx_frame, &rx_msg);
+            msg_decode_log(&rx_frame, &rx_msg);
 
             if (rx_msg.type == MSG_TYPE_FINAL &&
                 rx_msg.receiver == network_get_ownid() &&
@@ -434,6 +462,13 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
     network_reset_measurements();
     dwm_rx_flush();
 
+    uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 10);
+    float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
+    if (!(flags & 0x80000000U) && (flags & 0x02))
+        imu_get_results(&pitch_rad, &speed_horiz, &vel_z);
+
+    calibrate_set_pitch(pitch_rad);
+
     switch (sync_result) {
 
     /* ---- MASTER: initiates DS-TWR exchange ---- */
@@ -444,7 +479,8 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
             mprintf("ERROR: no peers — skipping TWR\r\n");
             return UWB_TWR_NOT_ENOUGH_DEVICES;
         }
-        network_print_certainty();    
+        network_print_certainty();
+        mprintf("[TWR] M peers=%d\r\n", network_get_count());
         uint16_t target_id = network_get_highest_uncertainty();
         if (target_id == 0) {
             mprintf("ERROR: no valid target — skipping TWR\n");
@@ -467,15 +503,9 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
             .poll_tx_ts = calibrate_tx_timestamp(poll_tx),
         };
 
-        uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 2);
-        float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
-        if (!(flags & 0x80000000U) && (flags & 0x02))
-            imu_get_results(&pitch_rad, &speed_horiz, &vel_z);
-
         final_msg.IMU_vel_horiz = speed_horiz;
         final_msg.IMU_vel_vert  = vel_z;
 
-        calibrate_set_pitch(pitch_rad);
 
         if (!uwb_wait_for_RESPONSE(target_id, &final_msg.resp_rx_ts,
              &final_msg.resp_pwr_diff_q8, &final_msg.resp_antenna_unreliable))
@@ -487,7 +517,8 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
                                final_msg.entry_id, &final_msg.entry_count,
                                passive_msgs, target_id);
 
-        //TODO are passive_msgs ever writen into final_msg? - it doesnt need to be - so why is it defined?
+        mprintf("[TWR] M pass=%d\r\n", final_msg.entry_count);
+//TODO are passive_msgs ever writen into final_msg? - it doesnt need to be - so why is it defined?
 
         if (!uwb_send_FINAL(network_get_expected_seq_num(), target_id, &final_msg))
             return UWB_TWR_TX_FAILED;
@@ -522,7 +553,7 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
             switch (rx_frame.type) {
             case DWM_RX_OK: {
                 msg_t rx_msg;
-                msg_decode(&rx_frame, &rx_msg);
+                msg_decode_log(&rx_frame, &rx_msg);
 
                 if (rx_msg.type == MSG_TYPE_POLL) {
 
@@ -543,17 +574,11 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
                         delay_us(50);
                         //osDelay(2);
 
-                        uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 2);
-                        float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
-                        if (!(flags & 0x80000000U) && (flags & 0x02))
-                            imu_get_results(&pitch_rad, &speed_horiz, &vel_z);
-
                         network_t *net = network_get_network();
 
                         net->self.imu_vel_vert  = vel_vert_to_u8(vel_z);
                         net->self.imu_vel_horiz = vel_horiz_to_u8(speed_horiz);
 
-                        calibrate_set_pitch(pitch_rad);
                         bool antenna_unreliable = false;
 
                         uwb_rx_meas_t poll_meas = {
@@ -601,14 +626,9 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
                         return UWB_TWR_RECEIVED;
 
                     } else if (network_is_acknowledged()) {
+                        mprintf("[TWR] P obs init=0x%04X resp=0x%04X\r\n", network_get_master(), rx_msg.receiver);
                         /* ---- Passive observer path ---- */
 
-                        uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 2);
-                        float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
-                        if (!(flags & 0x80000000U) && (flags & 0x02))
-                            imu_get_results(&pitch_rad, &speed_horiz, &vel_z);
-
-                        calibrate_set_pitch(pitch_rad);
                         bool antenna_unreliable = false;
                         msg_passive_t passive_msg = {
                             .seq_num      = rx_msg.data.poll.seq_num,
@@ -801,7 +821,7 @@ uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)
             .data.share = share,
         };
 
-        dwm_tx_frame_t tx_frame = msg_encode(&tx_msg);
+        dwm_tx_frame_t tx_frame = msg_encode_log(&tx_msg);
 
         if (dwm_tx(&tx_frame) != DWM_TX_OK) {
             if (dwm_tx(&tx_frame) != DWM_TX_OK) {
@@ -844,7 +864,7 @@ uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)
             switch (rx_frame.type) {
             case DWM_RX_OK: {
                 msg_t rx_msg;
-                msg_decode(&rx_frame, &rx_msg);
+                msg_decode_log(&rx_frame, &rx_msg);
 
                 if (rx_msg.type == MSG_TYPE_SHARE) {
                     if (!seq_ok(rx_msg.data.share.seq_num, "SHARE"))
@@ -903,7 +923,7 @@ static bool uwb_send_sync_reply(const msg_t *sync_rx)
         },
     };
 
-    dwm_tx_frame_t tx_frame = msg_encode(&tx_msg);
+    dwm_tx_frame_t tx_frame = msg_encode_log(&tx_msg);
 
     if (dwm_tx(&tx_frame) != DWM_TX_OK) {
         if (dwm_tx(&tx_frame) != DWM_TX_OK) {
@@ -941,7 +961,7 @@ static bool uwb_sync_to_all_id(uint8_t seq_num)
         .data.sync = sync_msg,
     };
 
-    dwm_tx_frame_t tx_frame = msg_encode(&tx_msg);
+    dwm_tx_frame_t tx_frame = msg_encode_log(&tx_msg);
 
     if (dwm_tx(&tx_frame) != DWM_TX_OK) {
         if (dwm_tx(&tx_frame) != DWM_TX_OK) {
@@ -963,7 +983,7 @@ static bool uwb_send_POLL(uint8_t seq_num, uint16_t target_id, uint64_t *out_pol
         .data.poll = { .seq_num = seq_num },
     };
 
-    dwm_tx_frame_t tx_frame = msg_encode(&tx_msg);
+    dwm_tx_frame_t tx_frame = msg_encode_log(&tx_msg);
 
     if (dwm_tx(&tx_frame) != DWM_TX_OK) {
         if (dwm_tx(&tx_frame) != DWM_TX_OK) {
@@ -985,7 +1005,7 @@ static bool uwb_send_RESPONSE(uint8_t seq_num, uint16_t target_id, uint64_t *out
         .data.response = { .seq_num = seq_num },
     };
 
-    dwm_tx_frame_t tx_frame = msg_encode(&tx_msg);
+    dwm_tx_frame_t tx_frame = msg_encode_log(&tx_msg);
 
     if (dwm_tx(&tx_frame) != DWM_TX_OK) {
         if (dwm_tx(&tx_frame) != DWM_TX_OK) {
@@ -1024,7 +1044,7 @@ static bool uwb_send_FINAL(uint8_t seq_num, uint16_t target_id, msg_final_t *fin
         .data.final = *final_msg,
     };
 
-    dwm_tx_frame_t tx_frame = msg_encode(&tx_msg);
+    dwm_tx_frame_t tx_frame = msg_encode_log(&tx_msg);
 
     switch (dwm_tx_delayed(&tx_frame, final_tx_desired, T_FINAL_TX_WAIT_MS)) {
     case DWM_TX_LATE:
@@ -1071,8 +1091,10 @@ static uwb_etwr_result_t uwb_wait_for_PASSIVES(uint64_t entries[],
         return UWB_TWR_RECEIVED;
     }
 
-    mprintf("[PASSIVE] expecting %d\r\n", expected_count);
-
+    mprintf("[PAS] exp=%d\r\n", expected_count);
+    for (uint8_t _pi = 0; _pi < expected_count; _pi++){
+        mprintf("[PAS] e%d=0x%04X\r\n", _pi, expected_ids[_pi]);
+    }
     dwm_rx_flush();
     dwm_rx_frame_t rx_frame = {0};
     uint32_t t_start   = osKernelGetTickCount();
@@ -1095,7 +1117,7 @@ static uwb_etwr_result_t uwb_wait_for_PASSIVES(uint64_t entries[],
         switch (rx_frame.type) {
         case DWM_RX_OK: {
             msg_t rx_msg;
-            msg_decode(&rx_frame, &rx_msg);
+            msg_decode_log(&rx_frame, &rx_msg);
 
             if (rx_msg.type == MSG_TYPE_PASSIVE) {
                 if (!seq_ok(rx_msg.data.passive.seq_num, "PASSIVE"))
@@ -1119,6 +1141,7 @@ static uwb_etwr_result_t uwb_wait_for_PASSIVES(uint64_t entries[],
                 out_passive_msgs[idx] = rx_msg.data.passive;
                 entry_ids[idx]        = rx_msg.sender;
                 antenna_unreliable[idx] = single_antenna_unreliable;
+                mprintf("[PAS] rx%d=0x%04X\r\n", idx, rx_msg.sender);
                 idx++;
 
                 if (idx == expected_count) {
@@ -1174,6 +1197,8 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
         if (peers[i].id == network_get_ownid()) break;
         my_idx++;
     }
+    mprintf("[PAS] send idx=%d pc=%d init=0x%04X resp=0x%04X\r\n",
+            my_idx, peer_count, initiator_id, responder_id);
 
     dwm_rx_flush();
     dwm_rx_frame_t rx_frame = {0};
@@ -1194,7 +1219,7 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
         switch (rx_frame.type) {
         case DWM_RX_OK: {
             msg_t rx_msg;
-            msg_decode(&rx_frame, &rx_msg);
+            msg_decode_log(&rx_frame, &rx_msg);
 
             if (rx_msg.type == MSG_TYPE_PASSIVE) {
                 if (rx_msg.receiver != network_get_master()) {
@@ -1252,7 +1277,7 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
         .data.passive = *passive_msg,
     };
 
-    dwm_tx_frame_t tx_frame = msg_encode(&tx_msg);
+    dwm_tx_frame_t tx_frame = msg_encode_log(&tx_msg);
 
     switch (dwm_tx_delayed(&tx_frame, passive_tx_desired, T_PASSIVE_TX_WAIT_MS)) {
     case DWM_TX_LATE:

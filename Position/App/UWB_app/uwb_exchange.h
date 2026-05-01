@@ -58,7 +58,7 @@ extern "C" {
 #define T_FINAL_TX_ASAP_TICKS  UWB_US_TO_TICKS(800)
 
 /** @brief Minimum delay before a passive observer's TX (ticks). */
-#define T_PASSIVE_TX_ASAP_TICKS UWB_US_TO_TICKS(500)
+#define T_PASSIVE_TX_ASAP_TICKS UWB_US_TO_TICKS(1000)
 
 /** @brief Timeout waiting for TXFRS after scheduling the delayed FINAL (ms). */
 #define T_FINAL_TX_WAIT_MS      10U

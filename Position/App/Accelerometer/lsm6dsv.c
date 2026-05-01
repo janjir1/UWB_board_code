@@ -18,7 +18,6 @@
 void StartAcc(void *argument) {
     // This function is called by FreeRTOS from main.c
     
-    osDelay(5000);
     bool passed = SelfTest();
     if (passed) {
         mprintf("LSM6DSV self test passed\r\n");
