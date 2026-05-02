@@ -18,10 +18,8 @@
 
 //TODO reinitiating the dwm3000 sucks try to use some integrated hw function - do only when extra time is available
 
-//TODO when waiting for SHARE we can ho to idle_rc
+//TODO when waiting for SHARE we can ho to idle_rc, and between sync and poll
 //TODO are we waiting for the DWM to timeout to turn itself off?
-//TODO set correct value for power in channel 9
-//TODO start this task when interupted from dwm? might speed up the exchange
 /* -----------------------------------------------------------------------
  * Forward declarations
  * ----------------------------------------------------------------------- */

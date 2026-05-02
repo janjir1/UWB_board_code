@@ -13,7 +13,12 @@ void StartBlink(void *argument) {
     int i = 0;
     while (1) {
         HAL_IWDG_Refresh(&hiwdg); // set t 3 seconds
-        mprintf("Hello from STM32! Count: %d\r\n", i);
+        #ifdef UWB_BOARD_V1_1
+            mprintf("Hello from Board V1.1! Count: %d\r\n", i);
+        #else
+            mprintf("Hello from Board V1.0! Count: %d\r\n", i);
+        #endif
+        
         i++;
         osDelay(1000);
     }

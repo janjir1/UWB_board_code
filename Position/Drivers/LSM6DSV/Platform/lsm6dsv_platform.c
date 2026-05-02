@@ -99,7 +99,9 @@ int32_t platform_read(void *handle, uint8_t reg, uint8_t *bufp,
  */
 void tx_com(uint8_t *tx_buffer, uint16_t len)
 {
+#if !defined(UWB_BOARD_V1_1)
   HAL_UART_Transmit(&huart1, tx_buffer, len, 1000);
+#endif
 
 }
 
