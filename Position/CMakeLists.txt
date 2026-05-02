@@ -34,7 +34,9 @@ add_executable(${CMAKE_PROJECT_NAME})
 add_subdirectory(${BOARD}/cmake/stm32cubemx)
 
 # ── Link options ──────────────────────────────────────────────────────────────
-target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -u _printf_float)
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE 
+    -u _printf_float
+    -Wl,-Map=${CMAKE_BINARY_DIR}/Position.map)
 
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 

@@ -484,12 +484,12 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
 {
     network_reset_measurements();
     dwm_rx_flush();
-
-    uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 10);
+    osDelay(1);
+    uint32_t flags = osThreadFlagsWait(0x02, osFlagsWaitAll, 0);
     float pitch_rad = 0, speed_horiz = 0, vel_z = 0;
     if (!(flags & 0x80000000U) && (flags & 0x02))
         imu_get_results(&pitch_rad, &speed_horiz, &vel_z);
-
+    mprintf("IMU data read");
     calibrate_set_pitch(pitch_rad);
 
     switch (sync_result) {
@@ -910,13 +910,13 @@ uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)
                         case MSG_TYPE_POLL:     
                         case MSG_TYPE_FINAL:
                             network_set_master(rx_msg.receiver);
-                            osDelay(DEEP_SLEEP-10);
+                            osDelay(DEEP_SLEEP-20);
                             break;
 
                         case MSG_TYPE_RESPONSE:
                         case MSG_TYPE_SHARE:
                             network_set_master(rx_msg.sender);
-                            osDelay(DEEP_SLEEP-10);
+                            osDelay(DEEP_SLEEP-20);
                             break;  
 
                         case MSG_TYPE_PASSIVE:

@@ -8,7 +8,7 @@
  * Central configuration for the LSM6DSV IMU.
  * Change values here only — never edit imu_init() directly.
  * ================================================================ */
-
+#define IMU_FIFO_RAW_BUF_ENTRIES (IMU_MAX_SAMPLES * 2 + 8)
 
 /* ── Boot ────────────────────────────────────────────────────────── */
 
@@ -29,9 +29,9 @@
  */
 
 #ifdef UWB_BOARD_V1_1
-    #define IMU_XL_ODR              LSM6DSV_ODR_AT_480Hz
+    #define IMU_XL_ODR              LSM6DSV_ODR_AT_240Hz
 #else
-    #define IMU_XL_ODR              LSM6DSV_ODR_AT_15Hz
+    #define IMU_XL_ODR              LSM6DSV_ODR_AT_60Hz
 #endif
 
 /* Full scale — maximum measurable acceleration
@@ -65,9 +65,9 @@
  * Same options as accel ODR above.
  */
 #ifdef UWB_BOARD_V1_1
-    #define IMU_GY_ODR              LSM6DSV_ODR_AT_480Hz
+    #define IMU_GY_ODR              LSM6DSV_ODR_AT_240Hz
 #else
-    #define IMU_GY_ODR              LSM6DSV_ODR_AT_15Hz
+    #define IMU_GY_ODR              LSM6DSV_ODR_AT_60Hz
 #endif
 
 
@@ -104,7 +104,7 @@
 #ifdef UWB_BOARD_V1_1
     #define IMU_SFLP_ODR            LSM6DSV_SFLP_120Hz
 #else
-    #define IMU_SFLP_ODR            LSM6DSV_SFLP_15Hz
+    #define IMU_SFLP_ODR            LSM6DSV_SFLP_30Hz
 #endif
 
 
@@ -121,11 +121,11 @@
  * Gyro options:  LSM6DSV_GY_NOT_BATCHED, LSM6DSV_GY_BATCHED_AT_7Hz5 ... _AT_240Hz
  */
 #ifdef UWB_BOARD_V1_1
-    #define IMU_FIFO_XL_BATCH       LSM6DSV_XL_BATCHED_AT_480Hz
-    #define IMU_FIFO_GY_BATCH       LSM6DSV_GY_BATCHED_AT_480Hz
+    #define IMU_FIFO_XL_BATCH       LSM6DSV_XL_BATCHED_AT_120Hz
+    #define IMU_FIFO_GY_BATCH       LSM6DSV_GY_BATCHED_AT_120Hz
 #else
-    #define IMU_FIFO_XL_BATCH       LSM6DSV_XL_BATCHED_AT_15Hz
-    #define IMU_FIFO_GY_BATCH       LSM6DSV_GY_BATCHED_AT_15Hz
+    #define IMU_FIFO_XL_BATCH       LSM6DSV_XL_BATCHED_AT_30Hz
+    #define IMU_FIFO_GY_BATCH       LSM6DSV_GY_BATCHED_AT_30Hz
 #endif
 
 
@@ -135,7 +135,7 @@
  *   LSM6DSV_TMSTMP_DEC_8   → every 8 samples
  *   LSM6DSV_TMSTMP_DEC_32  → every 32 samples
  */
-#define IMU_FIFO_TS_DEC         LSM6DSV_TMSTMP_DEC_1
+#define IMU_FIFO_TS_DEC         LSM6DSV_TMSTMP_DEC_8
 
 /* Maximum samples to read per FIFO drain.
  * At 7.5 Hz over 200ms: 2 accel + 2 gyro + 3 quat + 3 gravity + 2 ts = ~12 entries
@@ -154,11 +154,11 @@
 
 /* ── Calibration ───────────────────────────────────────────────── */
 #ifdef UWB_BOARD_V1_1
-    #define IMU_CAL_SAMPLES   512
-    #define IMU_CAL_ODR_HZ    480
+    #define IMU_CAL_SAMPLES   240
+    #define IMU_CAL_ODR_HZ    256
 #else
-    #define IMU_CAL_SAMPLES   16
-    #define IMU_CAL_ODR_HZ    7
+    #define IMU_CAL_SAMPLES   32
+    #define IMU_CAL_ODR_HZ    30
 #endif
 
 
