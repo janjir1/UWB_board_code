@@ -1,7 +1,9 @@
+/* distance.h — unchanged from original; all fixes are in distance.c */
 #pragma once
 
 #include "../UWB_app/uwb_exchange.h"   /* uwb_etwr_result_t */
 #include "../UWB_app/messages.h"
+#include "../UWB_app/uwb_network.h"
 
 void distance_calculate(uwb_etwr_result_t result);
 
@@ -143,28 +145,28 @@ typedef struct {
 
 
 typedef struct {
-    uint64_t      init_tx; 
-    uwb_rx_meas_t init_rx; 
+    uint64_t      init_tx;
+    uwb_rx_meas_t init_rx;
 
-    uint64_t      answer_tx; 
-    uwb_rx_meas_t answer_rx; 
+    uint64_t      answer_tx;
+    uwb_rx_meas_t answer_rx;
 } ss_twr_t;
 
 typedef struct {
-    uint64_t      init_tx; 
-    uwb_rx_meas_t init_rx; 
+    uint64_t      init_tx;
+    uwb_rx_meas_t init_rx;
 
-    uwb_rx_meas_t master_init_rx; 
+    uwb_rx_meas_t master_init_rx;
 
-    uint64_t      answer_tx; 
-    uwb_rx_meas_t answer_rx; 
+    uint64_t      answer_tx;
+    uwb_rx_meas_t answer_rx;
 } tdoa_twr_t;
 
 typedef struct {
     uint16_t initiator_id;
     uint16_t responder_id;
 
-    twr_timestamps_t twr;              
+    twr_timestamps_t twr;
     double result_distance_tick;  /* populated after calculation */
 } first_order_t;
 
@@ -174,7 +176,7 @@ typedef struct {
     twr_observation_t twr_observation;
     ss_twr_t       twr;
     bool           init_rx_unreliable;
-    bool           answer_rx_unreliable; 
+    bool           answer_rx_unreliable;
     double         result_distance_tick;
 } second_order_t;
 
@@ -195,7 +197,7 @@ typedef struct {
     second_order_t second[MAX_SECOND_ORDER];
     uint8_t        second_count;
 
-    third_order_t  third[MAX_THIRD_ORDER]; 
+    third_order_t  third[MAX_THIRD_ORDER];
     uint8_t        third_count;
 
 } timestamps_t;

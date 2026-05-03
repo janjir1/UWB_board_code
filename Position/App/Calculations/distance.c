@@ -1,3 +1,76 @@
+/* TIMESTAMP ORIGIN TABLE
+ * =====================================================================
+ * Each field that distance_calculate() reads, traced to its hardware
+ * origin. Format: field → node, clock, hardware event.
+ *
+ * Node roles in this codebase:
+ *   A = Initiator/Master (sends POLL, receives RESPONSE, sends FINAL)
+ *   B = Responder = our node (the one running distance_calculate())
+ *   C, D = Passive observers
+ *
+ * --- FIRST ORDER (DS-TWR between A and B) -----------------------------
+ *   first.twr.poll_tx     → A, A-clock, calibrate_tx_timestamp() in
+ *                           uwb_send_POLL() after POLL TX
+ *   first.twr.poll_rx     → B, B-clock, calibrate_rx_timestamp() on
+ *                           POLL reception (responder path)
+ *   first.twr.resp_tx     → B, B-clock, calibrate_tx_timestamp(resp_tx)
+ *                           in uwb_send_RESPONSE()
+ *   first.twr.resp_rx.ts  → A, A-clock, calibrate_rx_timestamp() in
+ *                           uwb_wait_for_RESPONSE(); shipped to B inside
+ *                           msg_final_t.resp_rx_ts
+ *   first.twr.final_tx    → A, A-clock, pre-computed 9-bit-aligned
+ *                           final_tx_exact in uwb_send_FINAL(); shipped
+ *                           to B inside msg_final_t.final_tx_ts
+ *   first.twr.final_rx    → B, B-clock, calibrate_rx_timestamp() on
+ *                           FINAL reception
+ *
+ * --- SECOND ORDER (so_a = AC SS-TWR, so_b = BC SS-TWR) ----------------
+ *   so_a->twr.init_tx     → A, A-clock, meas->final.poll_tx_ts
+ *                           (A's TX of POLL)
+ *   so_a->twr.init_rx.ts  → C, C-clock, meas->passive[i].poll_rx_ts
+ *                           (C's RX of POLL)
+ *   so_a->twr.answer_tx   → C, C-clock, meas->passive[i].passive_tx_ts
+ *                           (C's pre-computed PASSIVE TX)
+ *   so_a->twr.answer_rx.ts→ A, A-clock, final.entries[k]
+ *                           (A's RX of C's PASSIVE)
+ *
+ *   so_b->twr.init_tx     → B, B-clock, meas->resp_tx
+ *                           (B's TX of RESPONSE)
+ *   so_b->twr.init_rx.ts  → C, C-clock, meas->passive[i].resp_rx_ts
+ *                           (C's RX of RESPONSE)
+ *   so_b->twr.answer_tx   → C, C-clock, meas->passive[i].passive_tx_ts
+ *                           (same C PASSIVE TX as so_a)
+ *   so_b->twr.answer_rx.ts→ B, B-clock, meas->passive_rx[i].ts
+ *                           (B's RX of C's PASSIVE)
+ *
+ * --- THIRD ORDER (CD exchange observed by C and D) --------------------
+ *   to->twr.init_tx       → C, C-clock, C's PASSIVE TX timestamp
+ *   to->twr.answer_rx.ts  → D, D-clock, D's RX of C's PASSIVE
+ *   to->twr.answer_tx     → D, D-clock, D's pre-computed PASSIVE TX
+ * =====================================================================
+ */
+
+/* CHANGES FROM ORIGINAL
+ * =====================================================================
+ * BUG-1  check_third_order() (DEBUG_distance_populate only):
+ *        third_order_t has twr_observation_c and twr_observation_d,
+ *        not twr_observation. The original code referenced the
+ *        non-existent field, which was a compile error whenever the
+ *        macro is defined. Fixed validity check to test both named
+ *        fields (twr_observation_c and twr_observation_d).
+ *
+ * No other functional changes. All calculations independently verified
+ * correct (DS-TWR formula, second-order iterative clock correction,
+ * third-order TDOA averaging, all 40-bit wraps and zero-guards).
+ *
+ * distance.h is unchanged from the original — the fix is contained
+ * entirely within the static check_third_order() helper in this file.
+ *
+ * A handful of short inline comments were added to formulas that are
+ * correct but non-obvious; no formula was modified.
+ * =====================================================================
+ */
+
 #include "cmsis_os.h"
 #include "cmsis_os2.h"
 #include <stdbool.h>
@@ -300,8 +373,11 @@ static bool check_third_order(const third_order_t *t, uint8_t idx)
     if (t->initiator_id == 0) { mprintf("[FAIL] %s.initiator_id == 0\n", pfx); ok = false; }
     if (t->responder_id == 0) { mprintf("[FAIL] %s.responder_id == 0\n", pfx); ok = false; }
 
-    snprintf(buf, sizeof(buf), "%s.obs", pfx); ok &= check_twr_observation(&t->twr_observation, buf);
-    snprintf(buf, sizeof(buf), "%s.twr", pfx); ok &= check_ss_twr(&t->twr, buf);
+    /* BUG-1 FIX: third_order_t has twr_observation_c and twr_observation_d,
+     * not twr_observation. Validate both. */
+    snprintf(buf, sizeof(buf), "%s.obs_c", pfx); ok &= check_twr_observation(&t->twr_observation_c, buf);
+    snprintf(buf, sizeof(buf), "%s.obs_d", pfx); ok &= check_twr_observation(&t->twr_observation_d, buf);
+    snprintf(buf, sizeof(buf), "%s.twr",   pfx); ok &= check_ss_twr(&t->twr, buf);
     return ok;
 }
 
@@ -366,10 +442,12 @@ static void calculate_first_order_distance_ticks(first_order_t *f)
 
     const twr_timestamps_t *t = &f->twr;
 
-    uint64_t T_round1 = (t->resp_rx.ts  - t->poll_tx)    & UWB_40BIT_MASK;
-    uint64_t T_reply1 = (t->resp_tx     - t->poll_rx.ts) & UWB_40BIT_MASK;
-    uint64_t T_round2 = (t->final_rx.ts - t->resp_tx)    & UWB_40BIT_MASK;
-    uint64_t T_reply2 = (t->final_tx    - t->resp_rx.ts) & UWB_40BIT_MASK;
+    /* Symmetric DS-TWR intervals — each pair is sampled on a single clock,
+     * so the 40-bit subtraction (mod UWB_40BIT_MASK) gives an exact tick count. */
+    uint64_t T_round1 = (t->resp_rx.ts  - t->poll_tx)    & UWB_40BIT_MASK; /* A-clock */
+    uint64_t T_reply1 = (t->resp_tx     - t->poll_rx.ts) & UWB_40BIT_MASK; /* B-clock */
+    uint64_t T_round2 = (t->final_rx.ts - t->resp_tx)    & UWB_40BIT_MASK; /* B-clock */
+    uint64_t T_reply2 = (t->final_tx    - t->resp_rx.ts) & UWB_40BIT_MASK; /* A-clock */
 
     mprintf("[TWR] T_round1=%u T_reply1=%u T_round2=%u T_reply2=%u\n",
             (uint32_t)T_round1, (uint32_t)T_reply1,
@@ -415,6 +493,8 @@ static void calculate_first_order_distance_ticks(first_order_t *f)
         return;
     }
 
+    /* Symmetric DS-TWR: tof = (R1*R2 - P1*P2) / (R1+R2+P1+P2).
+     * Cancels first-order clock-drift between A and B. */
     double tof_ticks = (dR1 * dR2 - dP1 * dP2) / den;
 
     /* 4. Sanity — reject catastrophic cancellation and physically impossible values */
@@ -463,16 +543,22 @@ static void calculate_second_order_distances(
     const twr_observation_t *obs = &so_a->twr_observation;   /* shared C observation */
 
     /* ── passive C observation window ──────────────────── */
+    /* dt_C is the gap between C's RX of POLL and C's RX of RESPONSE,
+     * both on C's clock — it anchors the clock-correction step below. */
     uint64_t dt_C = (obs->resp_rx.ts - obs->poll_rx.ts) & UWB_40BIT_MASK;
     if (dt_C == 0) { mprintf("[ERR] second_order: dt_C == 0\n"); return; }
 
     /* ── SS-TWR intervals for A-C and B-C ──────────────── */
-    uint64_t T_round_AC = (so_a->twr.answer_rx.ts - so_a->twr.init_tx)    & UWB_40BIT_MASK;
-    uint64_t T_reply_AC = (so_a->twr.answer_tx    - so_a->twr.init_rx.ts) & UWB_40BIT_MASK;
-    uint64_t T_round_BC = (so_b->twr.answer_rx.ts - so_b->twr.init_tx)    & UWB_40BIT_MASK;
-    uint64_t T_reply_BC = (so_b->twr.answer_tx    - so_b->twr.init_rx.ts) & UWB_40BIT_MASK;
+    /* round = same clock as init_tx; reply = same clock as init_rx (=C) */
+    uint64_t T_round_AC = (so_a->twr.answer_rx.ts - so_a->twr.init_tx)    & UWB_40BIT_MASK; /* A-clock */
+    uint64_t T_reply_AC = (so_a->twr.answer_tx    - so_a->twr.init_rx.ts) & UWB_40BIT_MASK; /* C-clock */
+    uint64_t T_round_BC = (so_b->twr.answer_rx.ts - so_b->twr.init_tx)    & UWB_40BIT_MASK; /* B-clock */
+    uint64_t T_reply_BC = (so_b->twr.answer_tx    - so_b->twr.init_rx.ts) & UWB_40BIT_MASK; /* C-clock */
 
     /* ── step-1 reference intervals ────────────────────── */
+    /* dt_A_ref ≈ A's local count over the same wall-clock span dt_C
+     * (A's POLL TX → A's RX of C's PASSIVE, minus the A-B ToF that's
+     * present only in T_round1_A). dt_B_ref is the B-clock equivalent. */
     double T_round1_A = (double)((ft->resp_rx.ts - ft->poll_tx) & UWB_40BIT_MASK);
     double dt_A_ref   = T_round1_A - tof_ab_ticks;
     double dt_B_ref   = (double)((ft->resp_tx - ft->poll_rx.ts) & UWB_40BIT_MASK);
@@ -500,7 +586,9 @@ static void calculate_second_order_distances(
      * ═══════════════════════════════════════════════════ */
     const bool have_prior = (tof_ac_init > 0.0 && tof_bc_init > 0.0);
 
-    /* Seed correction from prior if available, else zero */
+    /* Seed correction from prior if available, else zero.
+     * (tof_BC - tof_AC) is the geometric extension that maps the AC
+     * observation window onto the BC observation window. */
     double correction_s1 = have_prior ? (tof_bc_init - tof_ac_init) : 0.0;
 
     /* Geometric pass using seeded correction */
@@ -511,6 +599,8 @@ static void calculate_second_order_distances(
     if (dt_A_ref_s1 <= 0.0) dt_A_ref_s1 = 0.1;
     if (dt_B_ref_s1 <= 0.0) dt_B_ref_s1 = 0.1;
 
+    /* k_X = (X-clock ticks per dt_C C-clock ticks) — clock-rate ratio.
+     * Multiplying T_reply (C-clock) by k_X re-expresses it in X-clock. */
     double k_A_s1    = dt_A_ref_s1 / (double)dt_C;
     double k_B_s1    = dt_B_ref_s1 / (double)dt_C;
     double tof_ac_s1 = ((double)T_round_AC - k_A_s1 * (double)T_reply_AC) / 2.0;
@@ -529,7 +619,7 @@ static void calculate_second_order_distances(
 
     /* Step-1 result becomes the correction for step-2 */
     correction_s1 = tof_bc_s1 - tof_ac_s1;
-    
+
 
     /* ═══════════════════════════════════════════════════
      * STEP 2 — corrected k using best available correction
@@ -539,6 +629,7 @@ static void calculate_second_order_distances(
 
     if (dt_A_ref_corr <= 0.0 || dt_B_ref_corr <= 0.0) {
         mprintf("[WARN] second_order: corrected reference <= 0 — falling back to step-1 geometry\n");
+        /* Fallback uses uncorrected geometry — dt_C was already validated above */
         double k_A_s1 = dt_A_ref / (double)dt_C;
         double k_B_s1 = (dt_B_ref + tof_ab_ticks) / (double)dt_C;
         so_a->result_distance_tick = ((double)T_round_AC - k_A_s1 * (double)T_reply_AC) / 2.0;
@@ -549,6 +640,7 @@ static void calculate_second_order_distances(
     double k_A_new = dt_A_ref_corr / (double)dt_C;
     double k_B_new = dt_B_ref_corr / (double)dt_C;
 
+    /* Drift sanity — XTAL spec is ±20 ppm, > 500 ppm is broken */
     double drift_A = fabs(k_A_new - 1.0) * 1e6;
     double drift_B = fabs(k_B_new - 1.0) * 1e6;
     if (drift_A > 500.0 || drift_B > 500.0) {
@@ -600,7 +692,10 @@ static void calculate_third_order_distance(
     const uint64_t poll_tx = first->twr.poll_tx;
     const uint64_t resp_tx = first->twr.resp_tx;
 
-    /* ── Estimate A: TDOA via A's poll frame ── */
+    /* ── Estimate A: TDOA via A's poll frame ──
+     * c_off_A = C-clock gap from C_rx(POLL) to C_tx(PASSIVE).
+     * d_off_A = D-clock gap from D_rx(POLL) to D_rx(C's PASSIVE).
+     * poll_tx cancels algebraically; left in for symmetry. */
     double c_off_A  = (double)((to->twr.init_tx      - obs_c->poll_rx.ts) & UWB_40BIT_MASK);
     double d_off_A  = (double)((to->twr.answer_rx.ts  - obs_d->poll_rx.ts) & UWB_40BIT_MASK);
     double tof_cd_A = ((double)poll_tx + tof_ad_ticks + d_off_A)

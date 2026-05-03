@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 # ── BOARD SELECTION ──────────────────────────────────────────────────────────
 if(NOT DEFINED BOARD)
-    set(BOARD "Board_V1.0")
+    set(BOARD "Board_V1.1")
 endif()
 message("Board: ${BOARD}")
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1,6 +1,13 @@
+/* CHANGES:
+ * CALIB_ANTENNA_MIN_DIST_TICKS: replaced literal 299792458.0 with SPEED_OF_LIGHT
+ *   from distance.h, per task constraint that all SoL uses go through that macro.
+ *   Numerical impact is negligible (~0.030% on a 3 m threshold), but the file is
+ *   included alongside distance.h so the macro is in scope.
+ */
 #pragma once
 
 #include <stdint.h>
+#include "distance.h"   /* SPEED_OF_LIGHT */
 
 #define CFO_RAW_TO_PPM(raw)  ((float)(raw) / (float)(1 << 26) * 1e6f)
 #define PPM_TO_K(ppm)        (1.0f + (ppm) / 1e6f)
@@ -17,7 +24,7 @@
 /* 3 metres expressed in DW3000 ticks (one-way, two-way already halved in DS-TWR):
  * ticks = metres / (c / (499.2e6 * 128 * 2)) */
 #define CALIB_ANTENNA_MIN_DIST_TICKS \
-    (3.0 * (499.2e6 * 128.0 * 2.0) / 299792458.0)
+    (3.0 * (499.2e6 * 128.0 * 2.0) / SPEED_OF_LIGHT)
 
 /* Device tilt (from vertical) above which correction is skipped entirely.
  * 15° keeps the board nearly flat — null axis is close to true vertical,
@@ -64,4 +71,3 @@ uint64_t calibrate_rx_timestamp(uint64_t rx_timestamp,
                                 bool *antenna_unreliable);
 
 uint64_t calibrate_tx_timestamp(uint64_t tx_timestamp);
-

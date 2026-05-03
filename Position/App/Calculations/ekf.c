@@ -1,45 +1,62 @@
+/* ============================================================================
+ * ekf.c — Cooperative UWB + IMU Joint Extended Kalman Filter
+ *
+ * Rewritten to fix all known bugs:
+ *   Bug #2  — IMU zero-init decodes to -4 m/s: guarded by peer_imu_valid[].
+ *   Bug #4  — P symmetry loss: Joseph-form update + upper-triangle mirror.
+ *   Bug #9  — ~300 ppm scale error: uses METERS_PER_TICK from distance.h,
+ *             not the hardcoded 299 792 458 m/s constant.
+ *   Bug #10 — Q_h overestimate (sum instead of RMS): vh_rms²×dt² + floor.
+ *   Bug #11 — Peers joining after init never seeded: per-peer peer_seeded[].
+ *   Bug #12 — 0x0000 ingested as valid 0 m range: range_scaled_to_m() guards
+ *             both 0x0000 (zero-init sentinel) and 0xFFFF (no-measurement).
+ *
+ * Additional improvements:
+ *   - Variable dt from HAL_GetTick(), capped at EKF_DT_MAX_S.
+ *   - Away-peer handling: sync_peers() marks absent peers peer_away=true,
+ *     resets their covariance immediately (prevents ghost-correlation updates),
+ *     and re-seeds returning peers from scratch.
+ *   - P diagonal clamped to EKF_P_MAX after each predict step.
+ *   - Outlier gate uses sqrt(S) where S = H*P*H^T + R (dynamic, not sigma_d).
+ *   - ekf_get_peer_pos() returns last-known position for away peers too.
+ *   - network_set_self_pos([0,0,0]) called unconditionally every step.
+ *   - ekf_init() is never called for peer join/leave events.
+ * ============================================================================ */
+
 #include "ekf.h"
 #include "../UWB_app/uwb_network.h"
 #include "../Calculations/distance.h"
+#include <math.h>
+#include <string.h>
+
+/* Avoid pulling in the full STM32 HAL header chain for one function. */
+extern uint32_t HAL_GetTick(void);
 
 /* ============================================================================
- * External helpers from your existing codebase
- * ============================================================================ */
-extern float  vel_vert_u8_to_ms (uint8_t u);
-extern float  vel_horiz_u8_to_ms(uint8_t u);
-extern double dist_scale_to_ticks(uint16_t encoded);
-
-/* DW3000: 1 UWB tick ≈ 15.65 ps, speed of light 299 792 458 m/s */
-#define UWB_TICKS_PER_METRE  (1.0 / (299792458.0 * 15.65e-12))
-
-static inline float ticks_to_metres(uint16_t distance_scaled)
-{
-    double ticks = dist_scale_to_ticks(distance_scaled);
-    if (ticks < 0.0) return -1.0f;   /* 0xFFFF sentinel = no measurement */
-    return (float)(ticks / UWB_TICKS_PER_METRE);
-}
-
-/* ============================================================================
- * Single static joint filter instance
+ * Internal state
  * ============================================================================ */
 static coop_ekf_t ekf;
 
 /* ============================================================================
- * Matrix helpers — operate on dynamic sub-blocks of EKF_MAX_STATE arrays.
- * N is the active state dimension (3 * n_peers), determined at runtime.
- * All output arguments must NOT alias any input argument.
+ * range_scaled_to_m
+ *   Convert a network-layer encoded distance to metres.
+ *   Returns -1.0f on any invalid or sentinel value.
+ *
+ *   Bug #12: 0x0000 is the zero-init sentinel (peer slot never measured).
+ *            Original code only guarded 0xFFFF; 0x0000 decoded as ~0 m.
+ *   Bug #9:  Original code used UWB_TICKS_PER_METRE computed from c=299 792 458,
+ *            which disagrees with METERS_PER_TICK in distance.h by ~300 ppm
+ *            (distance.h uses SPEED_OF_LIGHT = 299 702 547.0, the DW3000
+ *            empirically calibrated value).  Use (double)METERS_PER_TICK
+ *            to avoid the float-precision loss on the cast while keeping the
+ *            correct constant.
  * ============================================================================ */
-
-static void mat_zero_n(float m[EKF_MAX_STATE][EKF_MAX_STATE], int n)
+static float range_scaled_to_m(uint16_t dist_scaled)
 {
-    for (int i = 0; i < n; i++)
-        memset(m[i], 0, sizeof(float) * n);
-}
-
-static void mat_identity_n(float m[EKF_MAX_STATE][EKF_MAX_STATE], int n)
-{
-    mat_zero_n(m, n);
-    for (int i = 0; i < n; i++) m[i][i] = 1.0f;
+    if (dist_scaled == 0xFFFFU || dist_scaled == 0x0000U) return -1.0f;
+    double ticks = dist_scale_to_ticks(dist_scaled);
+    if (ticks <= 0.0) return -1.0f;
+    return (float)(ticks * (double)METERS_PER_TICK);
 }
 
 /* ============================================================================
@@ -47,19 +64,235 @@ static void mat_identity_n(float m[EKF_MAX_STATE][EKF_MAX_STATE], int n)
  * ============================================================================ */
 float ekf_certainty_to_sigma(uint8_t certainty)
 {
-    float q = certainty / 255.0f;
+    float q = (float)certainty / 255.0f;
     return EKF_SIGMA_MIN + (EKF_SIGMA_MAX - EKF_SIGMA_MIN) * (1.0f - q);
 }
 
 /* ============================================================================
- * Peer index lookup — maps a network peer_id to its slot in ekf.peer_ids[].
- * Returns -1 if not found.
+ * find_ekf_slot
+ *   Map a network peer_id to its EKF slot index [0 .. n_peers-1].
+ *   Returns -1 if not found.
  * ============================================================================ */
 static int8_t find_ekf_slot(uint16_t peer_id)
 {
-    for (int8_t i = 0; i < ekf.n_peers; i++)
-        if (ekf.peer_ids[i] == peer_id) return i;
+    for (int8_t p = 0; p < (int8_t)ekf.n_peers; p++)
+        if (ekf.peer_ids[p] == peer_id) return p;
     return -1;
+}
+
+/* ============================================================================
+ * reset_peer_covariance
+ *   Zero all cross-covariances coupling peer 'slot' to every other peer,
+ *   then reset the peer's own P diagonal to EKF_INIT_P_POS.
+ *
+ *   Called in two situations:
+ *     1. Peer goes away  — prevents K[away] ≠ 0 ghost updates from corrupting
+ *        the away peer's state while present-peer measurements continue.
+ *     2. Peer returns    — discards stale cross-covariances accumulated during
+ *        absence; re-seeding will re-establish correct correlations.
+ *
+ *   n_active : current total state dimension  (ekf.n_peers * 3)
+ * ============================================================================ */
+static void reset_peer_covariance(int slot, int n_active)
+{
+    int base = slot * 3;
+
+    for (int k = 0; k < 3; k++) {
+        int row = base + k;
+        /* Zero the entire row and symmetric column. */
+        for (int j = 0; j < n_active; j++) {
+            ekf.P[row][j] = 0.0f;
+            ekf.P[j][row] = 0.0f;
+        }
+        /* Then set the diagonal element (was zeroed in the loop above). */
+        ekf.P[row][row] = EKF_INIT_P_POS;
+    }
+}
+
+/* ============================================================================
+ * sync_peers
+ *   Reconcile the EKF peer table with the current network_t state.
+ *
+ *   Rule 1 — Peer present in EKF, absent from network:
+ *     Mark peer_away[p] = true.
+ *     Reset covariance immediately so subsequent present-peer updates cannot
+ *     bleed into the absent peer's state via non-zero cross-covariances.
+ *
+ *   Rule 2 — Peer present in EKF and back in network (was away):
+ *     Clear peer_away[p], peer_seeded[p], peer_imu_valid[p].
+ *     Zero state block and reset covariance — filter re-acquires from scratch.
+ *
+ *   Rule 3 — Peer in network, no EKF slot yet:
+ *     Allocate new slot.  Zero state, zero cross-covariances, P diagonal →
+ *     EKF_INIT_P_POS, Q[z] → EKF_Q_Z_POS.
+ *
+ *   Slots are NEVER freed (n_peers never decreases).  Away peers continue to
+ *   occupy their index; ekf_get_peer_pos() can still return their last fix.
+ *
+ *   Never calls ekf_init().
+ * ============================================================================ */
+static void sync_peers(void)
+{
+    network_t *net    = network_get_network();
+    uint16_t   own_id = network_get_ownid();
+    int        n      = (int)ekf.n_peers * 3;   /* current state dim (before adds) */
+
+    /* ---- Rule 1 & 2: walk existing EKF slots -------------------------------- */
+    for (int p = 0; p < (int)ekf.n_peers; p++) {
+
+        bool in_net = false;
+        for (int k = 0; k < (int)net->count; k++) {
+            if (net->peers[k].id == ekf.peer_ids[p]) { in_net = true; break; }
+        }
+
+        if (!in_net) {
+            /* Peer has left. */
+            if (!ekf.peer_away[p]) {
+                ekf.peer_away[p] = true;
+                reset_peer_covariance(p, n);   /* kill ghost-correlation risk */
+            }
+        } else {
+            /* Peer is present. */
+            if (ekf.peer_away[p]) {
+                /* Peer has returned — re-acquire from scratch. */
+                ekf.peer_away[p]      = false;
+                ekf.peer_seeded[p]    = false;
+                ekf.peer_imu_valid[p] = false;
+                ekf.x[p*3+0] = 0.0f;
+                ekf.x[p*3+1] = 0.0f;
+                ekf.x[p*3+2] = 0.0f;
+                reset_peer_covariance(p, n);
+            }
+        }
+    }
+
+    /* ---- Rule 3: add new peers --------------------------------------------- */
+    for (int k = 0; k < (int)net->count; k++) {
+        uint16_t pid = net->peers[k].id;
+        if (pid == 0 || pid == own_id)  continue;  /* unused slot or self */
+        if (find_ekf_slot(pid) >= 0)    continue;  /* already tracked     */
+        if (ekf.n_peers >= EKF_MAX_PEERS) continue; /* table full          */
+
+        int slot = (int)ekf.n_peers;
+        ekf.n_peers++;
+        int new_n = (int)ekf.n_peers * 3;
+
+        ekf.peer_ids[slot]       = pid;
+        ekf.peer_away[slot]      = false;
+        ekf.peer_seeded[slot]    = false;
+        ekf.peer_imu_valid[slot] = false;
+
+        ekf.x[slot*3+0] = 0.0f;
+        ekf.x[slot*3+1] = 0.0f;
+        ekf.x[slot*3+2] = 0.0f;
+
+        /* Q Z-entry initialised here; X/Y Q is computed dynamically in predict. */
+        ekf.Q[slot*3+2][slot*3+2] = EKF_Q_Z_POS;
+
+        /* Zero cross-covariances to existing peers; set diagonal. */
+        reset_peer_covariance(slot, new_n);
+    }
+}
+
+/* ============================================================================
+ * apply_range_update
+ *   Sequential EKF update for one scalar range measurement.
+ *
+ *   base_i, base_j : state base indices of the two endpoints.
+ *                    These are ignored (not accessed) when the corresponding
+ *                    self_x flag is true — pass 0 as a safe dummy.
+ *   self_i, self_j : true when the endpoint is self, fixed at [0,0,0].
+ *   range_m        : measured distance in metres (must be > 0).
+ *   sigma_d        : measurement noise std-dev in metres.
+ *   n              : active state dimension  (ekf.n_peers * 3).
+ *
+ *   Jacobian H (1×n, sparse):
+ *     H[base_i .. base_i+2] = −unit(i→j)   when !self_i
+ *     H[base_j .. base_j+2] = +unit(i→j)   when !self_j
+ *     (derivative of ‖xⱼ − xᵢ‖ w.r.t. each position component)
+ *
+ *   Outlier gate (Bug fix):
+ *     |innov| > EKF_OUTLIER_GATE × sqrt(S),  S = H*P*H^T + R
+ *     (original code gated on sigma_d, which ignores P and can mis-reject
+ *      valid measurements during filter convergence)
+ *
+ *   Covariance update — Joseph form (Bug #4):
+ *     P_new[i][j] = P[i][j] − K[i]·PH[j] − PH[i]·K[j] + S·K[i]·K[j]
+ *     where PH = P·H^T (precomputed before any write).
+ *     Upper triangle computed, then mirrored to lower — guarantees symmetry.
+ * ============================================================================ */
+static void apply_range_update(int base_i, int base_j,
+                               bool self_i, bool self_j,
+                               float range_m, float sigma_d,
+                               int n)
+{
+    /* Positions of both endpoints in the current state estimate. */
+    float xi = self_i ? 0.0f : ekf.x[base_i + 0];
+    float yi = self_i ? 0.0f : ekf.x[base_i + 1];
+    float zi = self_i ? 0.0f : ekf.x[base_i + 2];
+    float xj = self_j ? 0.0f : ekf.x[base_j + 0];
+    float yj = self_j ? 0.0f : ekf.x[base_j + 1];
+    float zj = self_j ? 0.0f : ekf.x[base_j + 2];
+
+    /* Predicted range h = ‖xⱼ − xᵢ‖ */
+    float dx = xj - xi;
+    float dy = yj - yi;
+    float dz = zj - zi;
+    float h  = sqrtf(dx*dx + dy*dy + dz*dz);
+    if (h < 1.0e-4f) h = 1.0e-4f;   /* guard: prevent divide-by-zero at origin */
+
+    /* Sparse Jacobian H (1×n) */
+    float H[EKF_MAX_STATE];
+    memset(H, 0, sizeof(H));
+
+    float ux = dx / h;
+    float uy = dy / h;
+    float uz = dz / h;
+
+    if (!self_i) { H[base_i+0] = -ux; H[base_i+1] = -uy; H[base_i+2] = -uz; }
+    if (!self_j) { H[base_j+0] = +ux; H[base_j+1] = +uy; H[base_j+2] = +uz; }
+
+    /* PH = P · H^T   (n×1) — computed from the PRE-update P. */
+    float PH[EKF_MAX_STATE];
+    for (int i = 0; i < n; i++) {
+        float acc = 0.0f;
+        for (int j = 0; j < n; j++) acc += ekf.P[i][j] * H[j];
+        PH[i] = acc;
+    }
+
+    /* S = H · P · H^T + R  (scalar;  R = sigma_d²) */
+    float S = sigma_d * sigma_d;
+    for (int j = 0; j < n; j++) S += H[j] * PH[j];
+
+    /* Outlier gate — dynamic: uses the full innovation covariance S, not sigma_d. */
+    float innov = range_m - h;
+    if (fabsf(innov) > EKF_OUTLIER_GATE * sqrtf(S)) return;
+
+    /* Kalman gain K = PH / S  (n×1) */
+    float K[EKF_MAX_STATE];
+    float S_inv = 1.0f / S;
+    for (int i = 0; i < n; i++) K[i] = PH[i] * S_inv;
+
+    /* State update: x += K · innov */
+    for (int i = 0; i < n; i++) ekf.x[i] += K[i] * innov;
+
+    /* Covariance update — Joseph form, upper triangle only, then mirrored.
+     *
+     *   P_new[i][j] = P[i][j] − K[i]·PH[j] − PH[i]·K[j] + S·K[i]·K[j]
+     *
+     * Safe to write in-place: the formula reads P[i][j] (old value) before
+     * writing it, and PH/K are fully precomputed arrays that are not
+     * modified here.  The lower-triangle write P[j][i]=v does not affect
+     * any upper-triangle read because j > i in the inner loop. */
+    for (int i = 0; i < n; i++) {
+        for (int j = i; j < n; j++) {
+            float v = ekf.P[i][j]
+                      - K[i]  * PH[j]
+                      - PH[i] * K[j]
+                      + S * K[i] * K[j];
+            ekf.P[i][j] = ekf.P[j][i] = v;
+        }
+    }
 }
 
 /* ============================================================================
@@ -72,142 +305,21 @@ void ekf_init(void)
     network_t *net    = network_get_network();
     uint16_t   own_id = network_get_ownid();
 
-    /* Register all current peers */
-    ekf.n_peers = 0;
-    for (int i = 0; i < net->count && ekf.n_peers < EKF_MAX_PEERS; i++) {
-        if (net->peers[i].id == own_id) continue;
-        ekf.peer_ids[ekf.n_peers++] = net->peers[i].id;
+    for (int i = 0; i < (int)net->count && (int)ekf.n_peers < EKF_MAX_PEERS; i++) {
+        uint16_t pid = net->peers[i].id;
+        if (pid == 0 || pid == own_id) continue;
+        ekf.peer_ids[ekf.n_peers++] = pid;
+        /* peer_away / peer_seeded / peer_imu_valid already false from memset */
     }
 
-    int n = ekf.n_peers * 3;   /* active state dimension */
-
-    /* Initial covariance — large: filter converges from measurements */
-    mat_identity_n(ekf.P, n);
+    int n = (int)ekf.n_peers * 3;
     for (int i = 0; i < n; i++) ekf.P[i][i] = EKF_INIT_P_POS;
 
-    /* Process noise — Z blocks small (vertical known), X/Y set per-step */
-    mat_zero_n(ekf.Q, n);
-    for (int p = 0; p < ekf.n_peers; p++)
-        ekf.Q[p*3 + 2][p*3 + 2] = EKF_Q_Z_POS;
+    for (int p = 0; p < (int)ekf.n_peers; p++)
+        ekf.Q[p*3+2][p*3+2] = EKF_Q_Z_POS;
 
-    ekf.initialised = false;
-}
-
-/* ============================================================================
- * sync_peers
- *   Checks whether any new peers have appeared in the network since init.
- *   New peers are appended to the joint state with large uncertainty.
- *   (Peer removal is not handled here — call ekf_init() for that.)
- * ============================================================================ */
-static void sync_peers(void)
-{
-    network_t *net    = network_get_network();
-    uint16_t   own_id = network_get_ownid();
-
-    for (int i = 0; i < net->count; i++) {
-        uint16_t pid = net->peers[i].id;
-        if (pid == own_id) continue;
-        if (find_ekf_slot(pid) >= 0) continue;       /* already tracked */
-        if (ekf.n_peers >= EKF_MAX_PEERS) continue;  /* no room         */
-
-        int slot = ekf.n_peers++;
-        ekf.peer_ids[slot] = pid;
-
-        int base = slot * 3;
-        ekf.P[base+0][base+0] = EKF_INIT_P_POS;
-        ekf.P[base+1][base+1] = EKF_INIT_P_POS;
-        ekf.P[base+2][base+2] = EKF_INIT_P_POS;
-        ekf.Q[base+2][base+2] = EKF_Q_Z_POS;
-    }
-}
-
-/* ============================================================================
- * apply_range_update
- *   Sequential EKF update for one range measurement between two endpoints.
- *
- *   base_i : state base index of node i  (0 for self, peer_slot*3 for peers)
- *   base_j : state base index of node j
- *   self_i : true if node i is self (pos fixed at [0,0,0], not in state)
- *   self_j : true if node j is self
- *   range_m: measured distance (metres)
- *   sigma_d: measurement noise std-dev (metres)
- *
- *   The Jacobian H is a 1×n sparse vector:
- *     For node i (if not self): H[base_i .. base_i+2] = +unit vector i→j
- *     For node j (if not self): H[base_j .. base_j+2] = -unit vector i→j
- *   (derivative of ||xi - xj|| w.r.t. each position component)
- * ============================================================================ */
-static void apply_range_update(int base_i, int base_j,
-                               bool self_i, bool self_j,
-                               float range_m, float sigma_d,
-                               int n)
-{
-    /* Position of node i */
-    float xi = self_i ? 0.0f : ekf.x[base_i + 0];
-    float yi = self_i ? 0.0f : ekf.x[base_i + 1];
-    float zi = self_i ? 0.0f : ekf.x[base_i + 2];
-
-    /* Position of node j */
-    float xj = self_j ? 0.0f : ekf.x[base_j + 0];
-    float yj = self_j ? 0.0f : ekf.x[base_j + 1];
-    float zj = self_j ? 0.0f : ekf.x[base_j + 2];
-
-    /* Predicted range */
-    float dx = xj - xi;
-    float dy = yj - yi;
-    float dz = zj - zi;
-    float h  = sqrtf(dx*dx + dy*dy + dz*dz);
-    if (h < 1e-4f) h = 1e-4f;
-
-    /* Outlier gate */
-    float innov = range_m - h;
-    if (fabsf(innov) > EKF_OUTLIER_GATE * sigma_d) return;
-
-    /* Build sparse H vector (1×n) */
-    float H[EKF_MAX_STATE];
-    memset(H, 0, sizeof(float) * n);
-
-    /* Unit vector from i to j */
-    float ux = dx / h, uy = dy / h, uz = dz / h;
-
-    /* d(||xi-xj||)/d(xi) = -(xj-xi)/h = -ux  — node i block */
-    if (!self_i) {
-        H[base_i + 0] = -ux;
-        H[base_i + 1] = -uy;
-        H[base_i + 2] = -uz;
-    }
-    /* d(||xi-xj||)/d(xj) = +(xj-xi)/h = +ux  — node j block */
-    if (!self_j) {
-        H[base_j + 0] = +ux;
-        H[base_j + 1] = +uy;
-        H[base_j + 2] = +uz;
-    }
-
-    /* PH = P * H^T  (Nx1) */
-    float PH[EKF_MAX_STATE];
-    for (int i = 0; i < n; i++) {
-        PH[i] = 0.0f;
-        for (int j = 0; j < n; j++)
-            PH[i] += ekf.P[i][j] * H[j];
-    }
-
-    /* S = H*P*H^T + R  (scalar) */
-    float S = sigma_d * sigma_d;
-    for (int j = 0; j < n; j++) S += H[j] * PH[j];
-
-    /* K = PH / S  (Nx1) */
-    float K[EKF_MAX_STATE];
-    for (int i = 0; i < n; i++) K[i] = PH[i] / S;
-
-    /* State update: x += K * innov */
-    for (int i = 0; i < n; i++) ekf.x[i] += K[i] * innov;
-
-    /* Covariance update: P = P - K * (PH)^T
-     * Since P is symmetric, HP = (PH^T)^T, so K*H*P = outer(K, PH).
-     * Update is done in-place — no temp matrices needed. */
-    for (int i = 0; i < n; i++)
-        for (int j = 0; j < n; j++)
-            ekf.P[i][j] -= K[i] * PH[j];
+    ekf.initialised  = false;
+    ekf.last_tick_ms = HAL_GetTick();
 }
 
 /* ============================================================================
@@ -215,151 +327,161 @@ static void apply_range_update(int base_i, int base_j,
  * ============================================================================ */
 void ekf_step(float az_self_ms, float ah_self_ms)
 {
-    network_t *net    = network_get_network();
+    static const float origin[3] = {0.0f, 0.0f, 0.0f};
 
-    /* Always sync in case new peers joined since last init */
+    /* ---- Variable dt -------------------------------------------------------- */
+    uint32_t now_ms = HAL_GetTick();
+    float dt_s;
+
+    if (!ekf.initialised) {
+        /* First step: last_tick_ms was set in ekf_init() just moments ago;
+         * the elapsed time is meaningless — use nominal. */
+        dt_s = EKF_DT_NOM_S;
+    } else {
+        /* Unsigned subtraction wraps correctly over the uint32 rollover. */
+        dt_s = (float)((uint32_t)(now_ms - ekf.last_tick_ms)) * 0.001f;
+        if (dt_s < 0.001f)      dt_s = EKF_DT_NOM_S;   /* guard near-zero jitter */
+        if (dt_s > EKF_DT_MAX_S) dt_s = EKF_DT_MAX_S;
+    }
+    ekf.last_tick_ms = now_ms;
+
+    /* ---- Sync peer list ----------------------------------------------------- */
     sync_peers();
 
-    int n = ekf.n_peers * 3;
+    int n = (int)ekf.n_peers * 3;
+
+    /* Self is always the fixed origin — set unconditionally every step. */
+    network_set_self_pos(origin);
+
     if (n == 0) return;
 
-    /* ------------------------------------------------------------------
-     * PREDICT
-     * Each peer's position shifts by its relative velocity w.r.t. self.
-     * Horizontal direction unknown for both: add magnitudes for worst-case.
-     * Vertical direction known: subtract signed values.
-     * ------------------------------------------------------------------ */
-    /* F = I (position-only state), so P = F*P*F^T + Q simplifies to P += Q.
-     * No F matrix needed. Update state and Q per peer: */
-    for (int p = 0; p < ekf.n_peers; p++) {
+    /* ---- PREDICT ------------------------------------------------------------ */
+    /*
+     * F = I (position-only state, no explicit velocity), so P_pred = P + Q.
+     * Q is diagonal; only the diagonal of P is updated here.
+     * Away peers are skipped: their covariance was already reset when they
+     * left, so there is nothing to propagate.
+     */
+    for (int p = 0; p < (int)ekf.n_peers; p++) {
+        if (ekf.peer_away[p]) continue;
+
         int base = p * 3;
 
-        node_t *peer_node = NULL;
-        for (int i = 0; i < net->count; i++) {
-            if (net->peers[i].id == ekf.peer_ids[p]) {
-                peer_node = &net->peers[i];
-                break;
+        /* IMU velocity — Bug #2: zero-init of imu_vel_vert decodes to ~−4 m/s
+         * in offset-binary encoding.  Use 0 until first confirmed measurement. */
+        float peer_vz = 0.0f;
+        float peer_vh = 0.0f;
+        if (ekf.peer_imu_valid[p]) {
+            node_t *peer_node = find_peer(ekf.peer_ids[p]);
+            if (peer_node) {
+                peer_vz = vel_vert_u8_to_ms(peer_node->imu_vel_vert);
+                peer_vh = vel_horiz_u8_to_ms(peer_node->imu_vel_horiz);
             }
         }
-        if (!peer_node) continue;
 
-        float peer_vz = vel_vert_u8_to_ms (peer_node->imu_vel_vert);
-        float peer_vh = vel_horiz_u8_to_ms(peer_node->imu_vel_horiz);
+        /* Relative Z displacement: peer Z moves at (peer_vz − self_vz) × dt. */
+        ekf.x[base + 2] += (peer_vz - az_self_ms) * dt_s;
 
-        float dz = (peer_vz - az_self_ms) * 0.2f;   /* relative Z displacement: dt=0.2s */
-        float dh = (peer_vh + ah_self_ms) * 0.2f;   /* relative horizontal magnitude     */
+        /* Horizontal process noise — Bug #10 fix:
+         *   Original: h_noise = (peer_vh + ah_self_ms) × dt + floor
+         *             This sums speeds linearly and mixes displacement with
+         *             variance units.
+         *   Fixed:    h_var = (RMS of peer and self speeds)² × dt²  +  floor × (dt/dt_nom)
+         *             RMS combines independent random walk contributions.
+         *             dt² converts speed² → displacement variance.
+         *             floor is a minimum variance floor, scaled by dt ratio. */
+        float vh_rms = sqrtf(peer_vh * peer_vh + ah_self_ms * ah_self_ms);
+        float h_var  = vh_rms * vh_rms * dt_s * dt_s
+                       + EKF_Q_H_FLOOR * (dt_s / EKF_DT_NOM_S);
+        float z_var  = EKF_Q_Z_POS * (dt_s / EKF_DT_NOM_S);
 
-        /* Displace Z state */
-        ekf.x[base + 2] += dz;
+        ekf.Q[base+0][base+0] = h_var;
+        ekf.Q[base+1][base+1] = h_var;
+        ekf.Q[base+2][base+2] = z_var;
 
-        /* Dynamic process noise */
-        float h_noise = dh + EKF_Q_H_FLOOR;
-        ekf.Q[base + 0][base + 0] = h_noise;
-        ekf.Q[base + 1][base + 1] = h_noise;
-        ekf.Q[base + 2][base + 2] = EKF_Q_Z_POS;
+        /* P += Q (diagonal only) with per-element cap. */
+        ekf.P[base+0][base+0] += h_var;
+        if (ekf.P[base+0][base+0] > EKF_P_MAX) ekf.P[base+0][base+0] = EKF_P_MAX;
+
+        ekf.P[base+1][base+1] += h_var;
+        if (ekf.P[base+1][base+1] > EKF_P_MAX) ekf.P[base+1][base+1] = EKF_P_MAX;
+
+        ekf.P[base+2][base+2] += z_var;
+        if (ekf.P[base+2][base+2] > EKF_P_MAX) ekf.P[base+2][base+2] = EKF_P_MAX;
     }
 
-    /* P = F*P*F^T + Q  (F=I so P = P + Q) */
-    for (int i = 0; i < n; i++)
-        for (int j = 0; j < n; j++)
-            ekf.P[i][j] += ekf.Q[i][j];
+    /* ---- UPDATE ------------------------------------------------------------- */
+    uint16_t own_id = network_get_ownid();
 
-    /* ------------------------------------------------------------------
-     * UPDATE — iterate all inter-node distance pairs
-     *
-     * Two categories:
-     *   1. Self → peer   : anchor=[0,0,0] (self), tag=peer state block
-     *   2. Peer → peer   : both endpoints in joint state
-     *
-     * Distance source: each node's net.self.peers[] slot holds distances
-     * that node measured. On node A:
-     *   net.self.peers[j] holds A→peerJ distances.
-     * For peer-peer distances (B→C) we look in net.peers[B].peers[slot_C].
-     * ------------------------------------------------------------------ */
+    /* Category 1: self → each peer -------------------------------------------
+     * Self is the fixed origin; only the peer state block is in the Jacobian. */
+    for (int p = 0; p < (int)ekf.n_peers; p++) {
+        if (ekf.peer_away[p]) continue;
 
-    /* Category 1: self → each peer */
-    for (int p = 0; p < ekf.n_peers; p++) {
         uint16_t pid = ekf.peer_ids[p];
 
-        /* Find self's ranging slot for this peer */
-        uint16_t dist_scaled = 0xFFFF;
-        uint8_t  certainty   = 0;
-        for (uint8_t j = 0; j < NETWORK_MAX_PEERS; j++) {
-            if (net->self.peers[j].peer_id == pid) {
-                dist_scaled = net->self.peers[j].distance_scaled;
-                certainty   = net->self.peers[j].certainty;
-                break;
-            }
-        }
+        node_peer_state_t *ps = network_get_peer_state(own_id, pid);
+        if (!ps) continue;
 
-        float range_m = ticks_to_metres(dist_scaled);
+        float range_m = range_scaled_to_m(ps->distance_scaled);
         if (range_m < 0.0f) continue;
 
-        /* First valid fix: seed position at (range, 0, 0) */
-        if (!ekf.initialised) {
-            ekf.x[p*3 + 0] = range_m;
-            ekf.x[p*3 + 1] = 0.0f;
-            ekf.x[p*3 + 2] = 0.0f;
+        /* Per-peer first-fix seeding — Bug #11 fix:
+         *   Original code used a single global 'initialised' flag, so peers
+         *   that joined after the first step were never seeded.
+         *   Fix: each peer gets its own peer_seeded[] flag. */
+        if (!ekf.peer_seeded[p]) {
+            ekf.x[p*3+0]         = range_m;  /* place at (range, 0, 0)          */
+            ekf.x[p*3+1]         = 0.0f;
+            ekf.x[p*3+2]         = 0.0f;
+            ekf.peer_seeded[p]    = true;
+            ekf.peer_imu_valid[p] = true;     /* peer is live; IMU data is valid */
         }
 
-        float sigma_d = ekf_certainty_to_sigma(certainty);
-        apply_range_update(
-            0,      /* base_i: self has no state block — dummy, self_i=true */
-            p * 3,  /* base_j: this peer's state block                      */
-            true,   /* self_i: self is fixed at origin                      */
-            false,  /* self_j                                                */
-            range_m, sigma_d, n);
+        float sigma_d = ekf_certainty_to_sigma(ps->certainty);
+        apply_range_update(0 /* dummy, self_i=true */,
+                           p * 3,
+                           true  /* self_i */,
+                           false /* self_j */,
+                           range_m, sigma_d, n);
     }
-    ekf.initialised = true;
 
-    /* Category 2: peer → peer (use distances stored in each peer's node_t) */
-    for (int pi = 0; pi < ekf.n_peers; pi++) {
-        uint16_t id_i = ekf.peer_ids[pi];
+    /* Category 2: peer → peer ------------------------------------------------
+     * Both endpoints are in the joint state; Jacobian spans two blocks.
+     * Each pair (pi, pj) processed once (pi < pj); uses peer pi's stored
+     * measurement of peer pj as reported by the network layer. */
+    for (int pi = 0; pi < (int)ekf.n_peers; pi++) {
+        if (ekf.peer_away[pi]) continue;
 
-        /* Find this peer's node in the network */
-        node_t *node_i = NULL;
-        for (int k = 0; k < net->count; k++) {
-            if (net->peers[k].id == id_i) { node_i = &net->peers[k]; break; }
-        }
-        if (!node_i) continue;
+        for (int pj = pi + 1; pj < (int)ekf.n_peers; pj++) {
+            if (ekf.peer_away[pj]) continue;
 
-        for (int pj = pi + 1; pj < ekf.n_peers; pj++) {
-            uint16_t id_j = ekf.peer_ids[pj];
+            node_peer_state_t *ps =
+                network_get_peer_state(ekf.peer_ids[pi], ekf.peer_ids[pj]);
+            if (!ps) continue;
 
-            /* Find node_i's stored distance to peer j */
-            uint16_t dist_scaled = 0xFFFF;
-            uint8_t  certainty   = 0;
-            for (uint8_t s = 0; s < NETWORK_MAX_PEERS; s++) {
-                if (node_i->peers[s].peer_id == id_j) {
-                    dist_scaled = node_i->peers[s].distance_scaled;
-                    certainty   = node_i->peers[s].certainty;
-                    break;
-                }
-            }
-
-            float range_m = ticks_to_metres(dist_scaled);
+            float range_m = range_scaled_to_m(ps->distance_scaled);
             if (range_m < 0.0f) continue;
 
-            float sigma_d = ekf_certainty_to_sigma(certainty);
-            apply_range_update(
-                pi * 3,   /* base_i: peer i's state block */
-                pj * 3,   /* base_j: peer j's state block */
-                false,    /* self_i                       */
-                false,    /* self_j                       */
-                range_m, sigma_d, n);
+            float sigma_d = ekf_certainty_to_sigma(ps->certainty);
+            apply_range_update(pi * 3, pj * 3,
+                               false /* self_i */,
+                               false /* self_j */,
+                               range_m, sigma_d, n);
         }
     }
 
-    /* ------------------------------------------------------------------
-     * Write positions back to network layer
-     * ------------------------------------------------------------------ */
-    for (int p = 0; p < ekf.n_peers; p++) {
-        uint16_t pid = ekf.peer_ids[p];
-        for (int k = 0; k < net->count; k++) {
-            if (net->peers[k].id == pid) {
-                net->peers[k].pos[0] = ekf.x[p*3 + 0];
-                net->peers[k].pos[1] = ekf.x[p*3 + 1];
-                net->peers[k].pos[2] = ekf.x[p*3 + 2];
+    ekf.initialised = true;
+
+    /* ---- WRITE-BACK --------------------------------------------------------- */
+    network_t *net = network_get_network();
+    for (int p = 0; p < (int)ekf.n_peers; p++) {
+        if (ekf.peer_away[p]) continue;
+        for (int k = 0; k < (int)net->count; k++) {
+            if (net->peers[k].id == ekf.peer_ids[p]) {
+                net->peers[k].pos[0] = ekf.x[p*3+0];
+                net->peers[k].pos[1] = ekf.x[p*3+1];
+                net->peers[k].pos[2] = ekf.x[p*3+2];
                 break;
             }
         }
@@ -372,4 +494,17 @@ void ekf_step(float az_self_ms, float ah_self_ms)
 const coop_ekf_t *ekf_get_state(void)
 {
     return &ekf;
+}
+
+/* ============================================================================
+ * ekf_get_peer_pos
+ * ============================================================================ */
+bool ekf_get_peer_pos(uint16_t peer_id, float pos_out[3])
+{
+    int8_t slot = find_ekf_slot(peer_id);
+    if (slot < 0) return false;
+    pos_out[0] = ekf.x[slot*3 + 0];
+    pos_out[1] = ekf.x[slot*3 + 1];
+    pos_out[2] = ekf.x[slot*3 + 2];
+    return true;
 }

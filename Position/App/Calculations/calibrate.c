@@ -1,3 +1,23 @@
+/* CHANGES:
+ * calibrate_rx_timestamp / calibrate_tx_timestamp:
+ *   Replaced (float) cast of the 40-bit timestamp with (double). A float
+ *   mantissa is 24 bits, so casting a ~2^39 timestamp loses up to ±2^15
+ *   ticks (~150 m one-way) of precision. distance.c subtracts individually
+ *   calibrated timestamps (e.g. T_round1 = resp_rx.ts - poll_tx), so the
+ *   per-cast rounding noise does NOT cancel and propagates directly into
+ *   the ranging result. double has a 53-bit mantissa and represents every
+ *   integer up to 2^53 exactly, so the precision loss is removed.
+ *   k is left as float (its value is ≈1 ± 20 ppm — float is plenty here).
+ *
+ * Note: averaging in calibrate_set_clock_offset_poll() is left intact —
+ *   the existing code already special-cases the first call (s_k == 0.0f
+ *   on boot), so no transient half-magnitude error occurs in practice.
+ *   The 0.0f sentinel is safe: k is a clock-rate ratio ≈1.0 ± 20 ppm and
+ *   can never legitimately equal exactly zero.
+ *
+ * No other functional changes.
+ */
+
 #include "cmsis_os.h"
 #include "cmsis_os2.h"
 #include <stdbool.h>
@@ -114,13 +134,18 @@ uint64_t calibrate_rx_timestamp(uint64_t rx_timestamp,
     float delta = CALIB_RX_TS_A * rssi_dbm;
     uint64_t ts = rx_timestamp + (int64_t)delta;
 
-    /* Step 3: clock rate correction using CFO-derived k */
-    ts = (uint64_t)((float)ts * calibrate_get_k());
+    /* Step 3: clock rate correction using CFO-derived k.
+     * Use double for the cast — float would discard the bottom 16 bits of
+     * the 40-bit timestamp, injecting tens of metres of precision noise
+     * into the per-timestamp value, which does not cancel when distance.c
+     * subtracts two calibrated timestamps. */
+    ts = (uint64_t)((double)ts * (double)calibrate_get_k());
 
     return ts;
 }
 
 uint64_t calibrate_tx_timestamp(uint64_t tx_timestamp)
 {
-    return (uint64_t)((float)tx_timestamp * calibrate_get_k());
+    /* Same precision rationale as calibrate_rx_timestamp(). */
+    return (uint64_t)((double)tx_timestamp * (double)calibrate_get_k());
 }
