@@ -90,6 +90,7 @@ typedef enum {
     UWB_SYNC_NEW_MASTER,        /**< Slave promoted itself to master (no master heard). */
     UWB_SYNC_NEW_SLAVE,         /**< Master yielded role to a higher-ID master. */
     UWB_SYNC_TX_FAILED,         /**< Master: SYNC TX failed at the hardware level. */
+    UWB_SYNC_UNEXPECTED_MASTER
 } uwb_sync_result_t;
 
 /**
@@ -105,6 +106,7 @@ typedef enum {
     UWB_TWR_NOT_ENOUGH_DEVICES, /**< No peers available or sync state invalid. */
     UWB_TWR_TX_FAILED,          /**< TX failed. */
     UWB_TWR_TIMEOUT,            /**< RX window expired before the expected message arrived. */
+    UWB_TWR_PASSIVE_TIMEOUT,
     UWB_TWR_UNEXPECTED_MASTER,  /**< Frame received from an unexpected sender. */
 } uwb_etwr_result_t;
 

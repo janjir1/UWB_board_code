@@ -163,6 +163,37 @@ static bool seq_ok(uint8_t rx_seq, const char *tag)
     return true;
 }
 
+bool uwb_unexpected_message_handler(const msg_t *rx_msg)
+{
+    mprintf("uwb_unexpected_message_handler 0x%02X\r\n", rx_msg->type);
+    switch (rx_msg->type) {
+                        
+        case MSG_TYPE_POLL:     
+        case MSG_TYPE_FINAL:
+            network_set_master(rx_msg->receiver);
+            osDelay(DEEP_SLEEP-20);
+            break;
+
+        case MSG_TYPE_RESPONSE:
+        case MSG_TYPE_SHARE:
+            network_set_master(rx_msg->sender);
+            osDelay(DEEP_SLEEP-20);
+            break; 
+            
+        case MSG_TYPE_SYNC:
+            if (rx_msg->receiver != ALL_ID) {
+                network_set_master(rx_msg->sender);
+                osDelay(DEEP_SLEEP-20);
+            }
+            break;
+
+        case MSG_TYPE_PASSIVE:
+        default: 
+            break;
+  
+    }
+    return true;
+}
 /* -----------------------------------------------------------------------
  * Public API — uwb_sync
  * ----------------------------------------------------------------------- */
@@ -177,6 +208,7 @@ static bool seq_ok(uint8_t rx_seq, const char *tag)
  */
 uwb_sync_result_t uwb_sync()
 {
+
     dwt_writesysstatuslo(DWT_INT_RXFTO_BIT_MASK |
                          DWT_INT_RXPTO_BIT_MASK);
     dwm_rx_flush();
@@ -337,15 +369,18 @@ uwb_sync_result_t uwb_sync()
                 case MSG_TYPE_FINAL:
                     network_set_master(rx_msg.receiver);
                     osDelay(DEEP_SLEEP-10);
+                    return UWB_SYNC_UNEXPECTED_MASTER;
                     break;
 
                 case MSG_TYPE_RESPONSE:
                 case MSG_TYPE_SHARE:
                     network_set_master(rx_msg.sender);
                     osDelay(DEEP_SLEEP-10);
+                    return UWB_SYNC_UNEXPECTED_MASTER;
                     break;  
 
-                case MSG_TYPE_PASSIVE:    
+                case MSG_TYPE_PASSIVE:  
+                return UWB_SYNC_UNEXPECTED_MASTER;  
                 default: 
                     break;
             
@@ -409,8 +444,9 @@ static bool uwb_wait_for_RESPONSE(uint16_t target_id,
                 *out_resp_pwr_diff_q8 = rx_frame.rssi_q8 - rx_frame.fp_q8;
                 return true;
             }
-            mprintf("ERROR: unexpected msg 0x%02X from 0x%04X during RESPONSE wait\r\n",
-                    rx_msg.type, rx_msg.sender);
+            if (uwb_unexpected_message_handler(&rx_msg)){
+                return UWB_TWR_UNEXPECTED_MASTER;
+            }
             break;
         }
         case DWM_RX_ERR:
@@ -681,6 +717,12 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
                         return result;
                     }
                 }
+                else{
+                    if (uwb_unexpected_message_handler(&rx_msg)) {
+                        return UWB_TWR_UNEXPECTED_MASTER;
+                    } 
+                }
+                
                 break;
             }
             case DWM_RX_ERR:
@@ -832,6 +874,7 @@ uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)
     switch (etwr_result) {
 
     case UWB_TWR_RECEIVED:
+    case UWB_TWR_PASSIVE_TIMEOUT:
     {
         osDelay(1);
         network_set_master(network_get_ownid());
@@ -905,25 +948,9 @@ uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)
                 }
                 mprintf("ERROR: unexpected msg 0x%02X during SHARE wait\r\n",
                         rx_msg.type);
-                    switch (rx_msg.type) {
-                        
-                        case MSG_TYPE_POLL:     
-                        case MSG_TYPE_FINAL:
-                            network_set_master(rx_msg.receiver);
-                            osDelay(DEEP_SLEEP-20);
-                            break;
-
-                        case MSG_TYPE_RESPONSE:
-                        case MSG_TYPE_SHARE:
-                            network_set_master(rx_msg.sender);
-                            osDelay(DEEP_SLEEP-20);
-                            break;  
-
-                        case MSG_TYPE_PASSIVE:
-                        case MSG_TYPE_SYNC:    
-                        default: 
-                            break;
-                            }
+                    if (uwb_unexpected_message_handler(&rx_msg)) {
+                        return UWB_TWR_UNEXPECTED_MASTER;
+                    }
                 break;
             }
             case DWM_RX_ERR:
@@ -1152,7 +1179,7 @@ static uwb_etwr_result_t uwb_wait_for_PASSIVES(uint64_t entries[],
             *out_count = idx;
             if (idx < expected_count)
                 mprintf("ERROR: PASSIVE timeout (%d/%d received)\r\n", idx, expected_count);
-            return UWB_TWR_TIMEOUT;
+            return UWB_TWR_PASSIVE_TIMEOUT;
         }
 
         dwm_rx(&rx_frame, wait_time - elapsed, true, first_rx, NULL);
@@ -1195,6 +1222,11 @@ static uwb_etwr_result_t uwb_wait_for_PASSIVES(uint64_t entries[],
                 }
                 //osDelay(2);
             }
+        else{
+            if (uwb_unexpected_message_handler(&rx_msg)){
+                return UWB_TWR_UNEXPECTED_MASTER;
+            }
+        }
             break;
         }
         case DWM_RX_ERR:
@@ -1205,7 +1237,7 @@ static uwb_etwr_result_t uwb_wait_for_PASSIVES(uint64_t entries[],
             *out_count = idx;
             if (idx < expected_count)
                 mprintf("ERROR: PASSIVE timeout (%d/%d received)\r\n", idx, expected_count);
-            return UWB_TWR_TIMEOUT;
+            return UWB_TWR_PASSIVE_TIMEOUT;
         }
     }
 }
@@ -1231,30 +1263,50 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
                                           uint16_t responder_id,
                                           msg_passive_t *passive_msg)
 {
-    /* Compute own TX-order index without disturbing network state */
-    int8_t my_idx = 0;
+    /* Compute own TX-order index and expected passive peer list */
     uint8_t peer_count = 0;
     const node_t *peers = network_get_peers(&peer_count);
+
+    uint16_t expected_ids[NETWORK_MAX_PEERS - 2] = {0};
+    uint8_t  expected_count = 0;
+    int8_t   my_idx = -1;
+
     for (uint8_t i = 0; i < peer_count; i++) {
         if (peers[i].id == initiator_id) continue;
         if (peers[i].id == responder_id) continue;
-        if (peers[i].id == network_get_ownid()) break;
-        my_idx++;
+
+        expected_ids[expected_count] = peers[i].id;
+
+        if (peers[i].id == network_get_ownid()) {
+            my_idx = expected_count;   // index of this node in expected_ids
+            break;                     // ignore any later peers
+        }
+
+        expected_count++;
     }
+
+    if (my_idx < 0) {
+        mprintf("ERROR: PASSIVE cannot find own ID in peer list\r\n");
+        return UWB_TWR_TX_FAILED;
+    }
+
     mprintf("[PAS] send idx=%d pc=%d init=0x%04X resp=0x%04X\r\n",
             my_idx, peer_count, initiator_id, responder_id);
+
 
     dwm_rx_flush();
     dwm_rx_frame_t rx_frame = {0};
     uint32_t t_start   = osKernelGetTickCount();
-    uint8_t  idx       = 0;
+    uint8_t  slot      = 0;   // which earlier slot we are processing
+    uint8_t  idx       = 0;   // index into passive_msg arrays
     uint32_t wait_time = T_PASSIVE_TX_WAIT_MS * my_idx;
-    bool first_rx = true;
-    while (idx < my_idx) {
+    bool first_rx      = true;
+
+    while (slot < my_idx) {
         uint32_t elapsed = osKernelGetTickCount() - t_start;
         if (elapsed >= wait_time) {
-            mprintf("ERROR: PASSIVE pre-TX wait timeout (got %d/%d)\r\n", idx, my_idx);
-            return UWB_TWR_TIMEOUT;
+            // Ran out of time for pre-TX listening; stop and go transmit
+            break;
         }
 
         dwm_rx(&rx_frame, wait_time - elapsed, true, first_rx, NULL);
@@ -1265,13 +1317,9 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
             msg_t rx_msg;
             msg_decode_log(&rx_frame, &rx_msg);
 
-            if (rx_msg.type == MSG_TYPE_PASSIVE) {
-                if (rx_msg.receiver != network_get_master()) {
-                    mprintf("ERROR: PASSIVE wrong master 0x%04X\r\n", rx_msg.receiver);
-                    return UWB_TWR_UNEXPECTED_MASTER;
-                }
-                if (!seq_ok(rx_msg.data.passive.seq_num, "PASSIVE"))
-                    break;
+            if (rx_msg.type == MSG_TYPE_PASSIVE &&
+                rx_msg.receiver == network_get_master() &&
+                seq_ok(rx_msg.data.passive.seq_num, "PASSIVE")) {
 
                 bool single_antenna_unreliable = false;
 
@@ -1282,34 +1330,56 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
                     &single_antenna_unreliable
                 );
 
-                passive_msg->entry_pwr_diff_q8[idx] = rx_frame.rssi_q8 - rx_frame.fp_q8;
-                passive_msg->entry_ids[idx]     = rx_msg.sender;
+                passive_msg->entry_pwr_diff_q8[idx]        = rx_frame.rssi_q8 - rx_frame.fp_q8;
+                passive_msg->entry_ids[idx]                = rx_msg.sender;
                 passive_msg->entry_antenna_unreliable[idx] = single_antenna_unreliable;
-                idx++;
+            } else {
+                if (uwb_unexpected_message_handler(&rx_msg)) {
+                    return UWB_TWR_UNEXPECTED_MASTER;
+                } 
             }
+
+            idx++;
+            slot++;
             break;
         }
-        case DWM_RX_ERR:
+
+        case DWM_RX_ERR: {
             mprintf("ERROR: PASSIVE RX error 0x%08lX\r\n", rx_frame.status);
+            uint16_t lost_id = expected_ids[slot];
+            passive_msg->entries[idx]                  = 0;
+            passive_msg->entry_pwr_diff_q8[idx]        = 0;
+            passive_msg->entry_ids[idx]                = lost_id;
+            passive_msg->entry_antenna_unreliable[idx] = 0;
+            idx++;
+            slot++;
             break;
-        case DWM_RX_TIMEOUT:
-            mprintf("ERROR: PASSIVE pre-TX wait timeout (got %d/%d)\r\n", idx, my_idx);
-            return UWB_TWR_TIMEOUT;
+        }
+
+        case DWM_RX_TIMEOUT: {
+            mprintf("ERROR: PASSIVE pre-TX wait timeout (slot %d/%d)\r\n", slot, my_idx);
+            uint16_t lost_id = expected_ids[slot];
+            passive_msg->entries[idx]                  = 0;
+            passive_msg->entry_pwr_diff_q8[idx]        = 0;
+            passive_msg->entry_ids[idx]                = lost_id;
+            passive_msg->entry_antenna_unreliable[idx] = 0;
+            idx++;
+            slot++;
+            break;
+        }
         }
     }
 
     passive_msg->entry_count = idx;
-
-
 
     /* Schedule TX — 9-bit aligned delayed TX to embed correct timestamp. */
     uint32_t now_hi32           = dwt_readsystimestamphi32();
     uint64_t now                = (uint64_t)now_hi32 << 8;
     uint64_t passive_tx_desired = now + T_PASSIVE_TX_ASAP_TICKS;
 
-    uint16_t tx_ant_delay  = dwt_gettxantennadelay();
-    uint64_t raw           = (passive_tx_desired - tx_ant_delay) & 0xFFFFFFFFFFULL;
-    uint64_t raw_aligned   = raw & 0xFFFFFFFE00ULL;
+    uint16_t tx_ant_delay   = dwt_gettxantennadelay();
+    uint64_t raw            = (passive_tx_desired - tx_ant_delay) & 0xFFFFFFFFFFULL;
+    uint64_t raw_aligned    = raw & 0xFFFFFFFE00ULL;
     uint64_t passive_tx_exact = raw_aligned + tx_ant_delay;
 
     passive_msg->passive_tx_ts = calibrate_tx_timestamp(passive_tx_exact);
@@ -1340,7 +1410,6 @@ static uwb_etwr_result_t uwb_send_PASSIVE(uint16_t initiator_id,
 
     mprintf("[PASSIVE] sent idx=%d entries=%d\r\n", my_idx, passive_msg->entry_count);
     return UWB_TWR_RECEIVED_PASSIVE;
-
+}
     //TODO pad to length - now if c transmits and goes to listen to share - might timeout, 
     // since we can still be transmiting passives - this problem will be visible on larger networks
-}
