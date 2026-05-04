@@ -10,6 +10,13 @@
  *   Bug #11 — Peers joining after init never seeded: per-peer peer_seeded[].
  *   Bug #12 — 0x0000 ingested as valid 0 m range: range_scaled_to_m() guards
  *             both 0x0000 (zero-init sentinel) and 0xFFFF (no-measurement).
+ *   Bug #13 — Degenerate collinear seed: all peers placed at (range_m, 0, 0)
+ *             kept y=0 permanently. Fixed with random-angle seeding on a
+ *             circle of radius range_m (xorshift32 hash, no stdlib needed).
+ *   Bug #14 — EKF_P_MAX diagonal-only cap can break positive semi-definiteness:
+ *             off-diagonal terms uncapped → |P_ij| > sqrt(P_ii·P_jj) possible
+ *             → S = H·P·H^T + R can go negative → sqrtf(S) = NaN. Fixed with
+ *             Cauchy-Schwarz clamp on the 3×3 peer block after each predict.
  *
  * Additional improvements:
  *   - Variable dt from HAL_GetTick(), capped at EKF_DT_MAX_S.
@@ -408,6 +415,26 @@ void ekf_step(float az_self_ms, float ah_self_ms)
 
         ekf.P[base+2][base+2] += z_var;
         if (ekf.P[base+2][base+2] > EKF_P_MAX) ekf.P[base+2][base+2] = EKF_P_MAX;
+
+        /* Bug #14 — EKF_P_MAX diagonal-only cap can break PSD:
+         * Clamping only the diagonal while leaving off-diagonal
+         * cross-covariances uncapped can violate |P_ij| ≤ sqrt(P_ii·P_jj).
+         * A non-PSD P makes S = H·P·H^T + R potentially negative, causing
+         * sqrtf(S) to return NaN on Cortex-M4 and corrupting the outlier
+         * gate and Kalman gain.  Fix: enforce the Cauchy-Schwarz PSD bound
+         * on the 3×3 peer self-block off-diagonals and mirror symmetry.
+         * Only 6 element pairs per peer — negligible CPU cost. */
+        for (int r = 0; r < 3; r++) {
+            for (int c = r + 1; c < 3; c++) {
+                float psd_lim = sqrtf(ekf.P[base+r][base+r]
+                                    * ekf.P[base+c][base+c]);
+                if (ekf.P[base+r][base+c] >  psd_lim)
+                    ekf.P[base+r][base+c] =  psd_lim;
+                if (ekf.P[base+r][base+c] < -psd_lim)
+                    ekf.P[base+r][base+c] = -psd_lim;
+                ekf.P[base+c][base+r] = ekf.P[base+r][base+c]; /* symmetry */
+            }
+        }
     }
 
     /* ---- UPDATE ------------------------------------------------------------- */
@@ -431,9 +458,33 @@ void ekf_step(float az_self_ms, float ah_self_ms)
          *   that joined after the first step were never seeded.
          *   Fix: each peer gets its own peer_seeded[] flag. */
         if (!ekf.peer_seeded[p]) {
-            ekf.x[p*3+0]         = range_m;  /* place at (range, 0, 0)          */
-            ekf.x[p*3+1]         = 0.0f;
-            ekf.x[p*3+2]         = 0.0f;
+            /* Bug #13 — Degenerate collinear seeding: all peers placed at
+             * (range_m, 0, 0) share y = 0.  That makes the y-component of
+             * the Jacobian H[y] = (yj - yi) / h  identically zero for every
+             * self→peer measurement, so the Kalman gain has no y-component
+             * and y is never updated — it stays 0 regardless of how many
+             * nodes are measuring.
+             *
+             * Fix: place the peer on a circle of radius range_m at a random
+             * angle derived from a lightweight xorshift32 hash seeded with
+             * run-time entropy (tick, peer_id, slot index).  This produces a
+             * non-zero H[y] immediately and lets the filter converge freely
+             * in both x and y.  No <stdlib.h> / hardware RNG required.
+             */
+            {
+                uint32_t rng = (uint32_t)(HAL_GetTick()
+                                ^ (uint32_t)ekf.peer_ids[p]
+                                ^ ((uint32_t)p * 2654435761UL));
+                /* One xorshift32 iteration — cheap and sufficient. */
+                rng ^= rng << 13;
+                rng ^= rng >> 17;
+                rng ^= rng << 5;
+                /* Map to angle in [0, 2π):  2π / 2^32 ≈ 1.46292e-9 */
+                float seed_angle = (float)rng * 1.46291808e-9f;
+                ekf.x[p*3+0] = range_m * cosf(seed_angle);
+                ekf.x[p*3+1] = range_m * sinf(seed_angle);
+                ekf.x[p*3+2] = 0.0f;
+            }
             ekf.peer_seeded[p]    = true;
             ekf.peer_imu_valid[p] = true;     /* peer is live; IMU data is valid */
         }
