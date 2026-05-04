@@ -329,6 +329,7 @@ void    network_reset_certainty(uint16_t a, uint16_t b);
 uint8_t network_get_certainty  (uint16_t a, uint16_t b);
 void network_update_certainty(uint16_t a, uint16_t b, uint8_t certainty);
 void network_print_certainty(void);
+void network_print_positions(void);
 
 node_peer_state_t *network_get_peer_state(uint16_t owner_id, uint16_t peer_id);
 #ifdef __cplusplus

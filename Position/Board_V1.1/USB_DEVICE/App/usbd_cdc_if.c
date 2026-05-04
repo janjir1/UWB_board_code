@@ -23,6 +23,9 @@
 
 /* USER CODE BEGIN INCLUDE */
 
+extern void PrintTask_TxCpltCallback(void);
+
+
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -311,6 +314,8 @@ static int8_t CDC_TransmitCplt_FS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
   UNUSED(Buf);
   UNUSED(Len);
   UNUSED(epnum);
+  HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
+  PrintTask_TxCpltCallback();
   /* USER CODE END 13 */
   return result;
 }

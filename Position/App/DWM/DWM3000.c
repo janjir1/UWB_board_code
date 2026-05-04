@@ -152,6 +152,7 @@ void StartRangingTask(void *argument) {
         ekf_step(0, 0);//TODO update EKF with new distance measurements before sleeping
 
         dwm_sleep();
+        network_print_positions();
         osDelay(sleep_time);
         dwm_wakeup();
     }

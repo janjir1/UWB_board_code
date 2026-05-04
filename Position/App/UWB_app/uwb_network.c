@@ -355,7 +355,14 @@ void network_print_certainty(void)
     }
 }
 
-
+void network_print_positions(void)
+{
+    for (int i = 0; i < net.count; i++) {
+        mprintf("[POS] 0x%04X %.2f %.2f %.2f\n",
+                net.peers[i].id,
+                net.peers[i].pos[0], net.peers[i].pos[1], net.peers[i].pos[2]);
+    }
+}
 
 
 void network_set_distance(uint16_t a, uint16_t b, uint16_t dist_scaled) { 
