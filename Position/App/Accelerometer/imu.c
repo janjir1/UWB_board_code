@@ -63,6 +63,12 @@ void imu_calibrate(void)
     float    acc[3] = {0.0f, 0.0f, 0.0f};
     uint16_t n      = 0;
 
+    HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
+    osDelay(2000); //time for user to lay the device down
+    HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
+    osDelay(1000); //time for user to lay the device down
+    HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
+
     /* Flush stale FIFO instantly via bypass — no buffer, no bus reads */
     lsm6dsv_fifo_mode_set(&dev_ctx, LSM6DSV_BYPASS_MODE);
     lsm6dsv_fifo_mode_set(&dev_ctx, LSM6DSV_STREAM_MODE);
@@ -71,7 +77,7 @@ void imu_calibrate(void)
     last_ts = 0;
 
     mprintf("[IMU] Calibrating bias (%d samples)...", IMU_CAL_SAMPLES);
-    HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
+    
 
     while (n < IMU_CAL_SAMPLES)
     {
