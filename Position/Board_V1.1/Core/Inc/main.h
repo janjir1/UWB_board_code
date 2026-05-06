@@ -68,8 +68,16 @@ void Error_Handler(void);
 #define DWM_EXTI_EXTI_IRQn EXTI0_IRQn
 #define SPI1_CS_DWM_Pin GPIO_PIN_1
 #define SPI1_CS_DWM_GPIO_Port GPIOA
+#define BATERY_ADC_Pin GPIO_PIN_5
+#define BATERY_ADC_GPIO_Port GPIOA
+#define CHRG_STDBY_Pin GPIO_PIN_7
+#define CHRG_STDBY_GPIO_Port GPIOA
+#define CHRG_IND_Pin GPIO_PIN_0
+#define CHRG_IND_GPIO_Port GPIOB
 #define SPI2_CS_Pin GPIO_PIN_12
 #define SPI2_CS_GPIO_Port GPIOB
+#define VBUS_sense_Pin GPIO_PIN_9
+#define VBUS_sense_GPIO_Port GPIOA
 #define Debug_SWDIO_Pin GPIO_PIN_13
 #define Debug_SWDIO_GPIO_Port GPIOA
 #define Debug_SWCLK_Pin GPIO_PIN_14
@@ -96,6 +104,7 @@ void Error_Handler(void);
 #ifdef UWB_BOARD_V1_1
   extern SPI_HandleTypeDef hspi2;
   extern UART_HandleTypeDef hlpuart1;
+  extern ADC_HandleTypeDef hadc1;
 #else
   extern I2C_HandleTypeDef hi2c1;
   extern USART_HandleTypeDef husart2;

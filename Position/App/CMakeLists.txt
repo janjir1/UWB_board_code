@@ -23,6 +23,7 @@ add_library(app STATIC
     Calculations/calibrate.c
     Calculations/ekf.c
     Generic/UART.h
+    Generic/power.c
 )
 
 target_include_directories(app PUBLIC

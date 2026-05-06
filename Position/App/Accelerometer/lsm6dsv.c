@@ -44,7 +44,7 @@ void StartAcc(void *argument) {
         imu_integrate(&fifo, &pitch_rad, &speed_horiz, &vel_z, &ticks_elapsed);
         osThreadFlagsSet(RangingHandle, 0x02);
         mprintf("IMU data ready\r\n");
-        //imu_print_results(pitch_rad, speed_horiz, vel_z, ticks_elapsed);
+
     }
     vTaskDelete( NULL );
     while(1) { } 

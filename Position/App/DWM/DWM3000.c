@@ -22,6 +22,7 @@
 #include "../Calculations/distance.h"
 #include "../Calculations/ekf.h"
 #include "uart.h"
+#include "power.h"
 
 #define U64_HI(x)  ((uint32_t)((x) >> 32))
 #define U64_LO(x)  ((uint32_t)((x) & 0xFFFFFFFFU))
@@ -75,10 +76,37 @@ uint32_t tx_err_watchdog(uwb_sync_result_t result_sync,
     return sleep_time;
 }
 
+void low_battery_check(void){
+    const BatteryStatus_t *s = power_get_status();
+
+    bool bat_too_low = (s->battery_voltage_V > 0.5f)
+                    && (s->battery_voltage_V < 3.50f)
+                    && !s->usb_connected;
+
+    if (bat_too_low)
+    {
+        dwm_sleep();
+
+        for (int i = 0; i < 3; i++)
+        {
+            HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_SET);
+            HAL_Delay(200);
+            HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_RESET);
+            HAL_Delay(200);
+        }
+
+        __HAL_PWR_CLEAR_FLAG(PWR_FLAG_WUF2);
+        HAL_PWREx_EnterSHUTDOWNMode();   // does not return
+    }
+
+    return;
+}
+
 void StartRangingTask(void *argument) {
 
-    
-    
+    power_read();
+    low_battery_check();
+
     mprintf("Starting DWM3000 task\r\n");
     bool passed = dwm_init();
     if (passed) {
@@ -125,6 +153,9 @@ void StartRangingTask(void *argument) {
 
     ekf_init(boot_cfg.hints, 4);
     uart_rst_arm();
+
+    uint8_t counter = 0;
+
     if (!boot_cfg.charge_only){
         while(1){
             
@@ -155,6 +186,16 @@ void StartRangingTask(void *argument) {
             uint32_t t_start = osKernelGetTickCount();
 
             dwm_sleep();
+
+            counter++;
+
+            
+            if (counter % 50 == 0) {
+                power_read();
+                uart_print_power();
+                low_battery_check();
+                counter = 0;
+            }
 
             if (boot_cfg.valid){
                 ekf_step(0, 0); //TODO, setup IMU inputs
@@ -188,7 +229,6 @@ void StartRangingTask(void *argument) {
                 osDelay(100);        // let RST-ACK finish transmitting before reset
                 NVIC_SystemReset();
             }
-            osDelay(1000);
         }
     }
     

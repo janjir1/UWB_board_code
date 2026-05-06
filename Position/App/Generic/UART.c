@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include "../UWB_app/uwb_network.h"
 #include "my_print.h"
+#include "power.h"
 
 /* =========================================================================
  * Boot phase RX
@@ -227,6 +228,21 @@ bool uart_periodic_poll(void)
     }
 
     return rst;
+}
+
+void uart_print_power(void)
+{
+    const BatteryStatus_t *s = power_get_status();
+    char tx_buf[48];
+    int  tx_len;
+
+    tx_len = snprintf(tx_buf, sizeof(tx_buf), "[PWR] %.2fV USB:%d CHG:%d STBY:%d\r\n",
+                      (double)s->battery_voltage_V,
+                      (int)s->usb_connected,
+                      (int)s->is_charging,
+                      (int)s->charge_complete);
+
+    HAL_UART_Transmit(&hlpuart1, (uint8_t *)tx_buf, (uint16_t)tx_len, 50);
 }
 
 /* =========================================================================
