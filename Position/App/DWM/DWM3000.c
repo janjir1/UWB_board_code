@@ -21,6 +21,7 @@
 #include "../UWB_app/uwb_network.h"
 #include "../Calculations/distance.h"
 #include "../Calculations/ekf.h"
+#include "uart.h"
 
 #define U64_HI(x)  ((uint32_t)((x) >> 32))
 #define U64_LO(x)  ((uint32_t)((x) & 0xFFFFFFFFU))
@@ -75,6 +76,8 @@ uint32_t tx_err_watchdog(uwb_sync_result_t result_sync,
 }
 
 void StartRangingTask(void *argument) {
+
+    
     
     mprintf("Starting DWM3000 task\r\n");
     bool passed = dwm_init();
@@ -107,21 +110,28 @@ void StartRangingTask(void *argument) {
     }
     osDelay(200);
 
-    /*
-    if (dwm_get_addr() == 0x506B) {
-        dwm_tx_continuous_delayed();   // device A transmits
-    } else {
-        dwm_rx_continuous_sleep();
-
-    }
-        */
-
-    //msg_run_tests();
-
     network_init(dwm_get_addr());
-    ekf_init();
 
+    bool ok = uart_boot_start();
+    mprintf("uart_boot_start -> %d\r\n", ok ? 1 : 0);
+    
     osThreadFlagsWait(0x01, osFlagsWaitAll, osWaitForever);
+
+    boot_config_t boot_cfg = uart_boot_config_read();
+
+    mprintf("boot_cfg.valid = %d\r\n", boot_cfg.valid ? 1 : 0);
+    mprintf("boot_cfg.charge_only = %d\r\n", boot_cfg.charge_only ? 1 : 0);
+
+    for (uint8_t i = 0; i < 4; i++) {
+        mprintf("hint[%u]: addr=0x%04X x=%.2f y=%.2f z=%.2f\r\n",
+                i,
+                boot_cfg.hints[i].id,
+                boot_cfg.hints[i].x,
+                boot_cfg.hints[i].y,
+                boot_cfg.hints[i].z);
+    }
+
+    ekf_init(boot_cfg.hints, 4);
     //uint8_t timer = 0;
     while(1){
         

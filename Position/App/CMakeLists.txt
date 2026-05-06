@@ -10,6 +10,7 @@ add_library(app STATIC
 
     # Generic utilities
     Generic/my_print.c
+    Generic/UART.c
 
     # DWM — add files here when ready
     DWM/DWM3000.c
@@ -21,6 +22,7 @@ add_library(app STATIC
     Calculations/distance.c
     Calculations/calibrate.c
     Calculations/ekf.c
+    Generic/UART.h
 )
 
 target_include_directories(app PUBLIC

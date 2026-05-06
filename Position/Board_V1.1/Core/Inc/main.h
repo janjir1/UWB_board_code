@@ -95,6 +95,7 @@ void Error_Handler(void);
 
 #ifdef UWB_BOARD_V1_1
   extern SPI_HandleTypeDef hspi2;
+  extern UART_HandleTypeDef hlpuart1;
 #else
   extern I2C_HandleTypeDef hi2c1;
   extern USART_HandleTypeDef husart2;

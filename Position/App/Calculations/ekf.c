@@ -25,18 +25,8 @@ extern uint32_t HAL_GetTick(void);
 /* Spread of the Xorshift32 random seed used for unknown tag nodes (metres). */
 #define EKF_INIT_RAND_M  2.0f
 
-typedef struct { uint16_t id; float x, y, z; } ekf_node_hint_t;
-
-static const ekf_node_hint_t ekf_pos_hints[] = {
-    /* ── anchors ── */
-    { 0x63D8u,  0.0f,  0.0f,  0.0f },   /* ANCHOR 0 — origin              */
-    { 0x91EDu,  1.0f,  1.0f,  2.0f },   /* ANCHOR 1 — ~5 m along X        */
-    { 0xC019u,  -2.0f,  4.0f,  -0.20f },   /* ANCHOR 2 — corner              */
-    { 0x28CCu,  -3.0f,  4.0f,  2.5f },   /* ANCHOR 3 — elevated centre     */
-    /* ── tags / peers — add rows as needed ── */
-    /* { 0xAAAAu,  1.0f,  1.0f,  1.0f }, */
-};
-#define EKF_POS_HINTS_N  (sizeof(ekf_pos_hints) / sizeof(ekf_pos_hints[0]))
+static const ekf_node_hint_t *g_ekf_pos_hints = NULL;
+static uint8_t g_ekf_pos_hints_n = 0;
 
 /* Fallback jitter when a node has no hint entry (avoids exact zero). */
 
@@ -270,8 +260,11 @@ static void alloc_slot(int slot, uint16_t id, int n_after)
      *          the degenerate all-zeros start without implying a wrong location. */
     {
         const ekf_node_hint_t *hint = NULL;
-        for (unsigned _h = 0; _h < EKF_POS_HINTS_N; _h++) {
-            if (ekf_pos_hints[_h].id == id) { hint = &ekf_pos_hints[_h]; break; }
+        for (uint8_t h = 0; h < g_ekf_pos_hints_n; h++) {
+            if (g_ekf_pos_hints[h].id == id) {
+                hint = &g_ekf_pos_hints[h];
+                break;
+            }
         }
         if (hint != NULL) {
             /* Known anchor — place at hint and mark seeded immediately.
@@ -1180,13 +1173,16 @@ static void ekf_step_phase2(float az_self_ms, float ah_self_ms, float dt_s)
  * ╚══════════════════════════════════════════════════════════════════════════╝
  * ============================================================================ */
 
-void ekf_init(void)
+void ekf_init(const ekf_node_hint_t *pos_hints, uint8_t pos_hints_n)
 {
     /* A real MCU hard reset clears static RAM before this function is called.
      * If the network/application layer calls ekf_init() during a Phase 2
      * self-disconnect/reconnect event, do not erase the solved anchor map or
      * last-known tag positions.  Only reset stale motion priors and inflate P
      * so fresh UWB data can pull the state back in cleanly. */
+    g_ekf_pos_hints = pos_hints;
+    g_ekf_pos_hints_n = pos_hints_n;
+
     if (ekf_phase == EKF_PHASE_TAG_LOCALIZE) {
         int n = (int)ekf.n_peers * 3;
         uint16_t own_id = network_get_ownid();

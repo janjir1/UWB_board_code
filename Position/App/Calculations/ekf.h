@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include "../Generic/UART.h"
 
 /* ============================================================================
  * Two-Phase Cooperative UWB + IMU Position Estimator
@@ -198,7 +199,7 @@ typedef struct {
  *
  *   All four anchor IDs must be set in EKF_ANCHOR_IDS[] (ekf.c) first.
  */
-void ekf_init(void);
+void ekf_init(const ekf_node_hint_t *pos_hints, uint8_t pos_hints_n);
 
 /**
  * ekf_step
