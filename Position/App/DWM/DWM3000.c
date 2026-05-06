@@ -122,49 +122,74 @@ void StartRangingTask(void *argument) {
     mprintf("boot_cfg.valid = %d\r\n", boot_cfg.valid ? 1 : 0);
     mprintf("boot_cfg.charge_only = %d\r\n", boot_cfg.charge_only ? 1 : 0);
 
-    for (uint8_t i = 0; i < 4; i++) {
-        mprintf("hint[%u]: addr=0x%04X x=%.2f y=%.2f z=%.2f\r\n",
-                i,
-                boot_cfg.hints[i].id,
-                boot_cfg.hints[i].x,
-                boot_cfg.hints[i].y,
-                boot_cfg.hints[i].z);
-    }
 
     ekf_init(boot_cfg.hints, 4);
-    //uint8_t timer = 0;
-    while(1){
-        
-        mprintf("Starting sync\r\n");
-        HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
-        uwb_sync_result_t result_sync = uwb_sync();
-        mprintf("Sync result: %d\r\n", result_sync);
-
-        if (result_sync == UWB_SYNC_UNEXPECTED_MASTER){
+    uart_rst_arm();
+    if (!boot_cfg.charge_only){
+        while(1){
+            
+            mprintf("Starting sync\r\n");
             HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
-            continue;
-        } 
+            uwb_sync_result_t result_sync = uwb_sync();
+            mprintf("Sync result: %d\r\n", result_sync);
 
-        uwb_etwr_result_t result_etwr = uwb_extended_twr(result_sync);
+            if (result_sync == UWB_SYNC_UNEXPECTED_MASTER){
+                HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
+                continue;
+            } 
 
-        if ((result_etwr == UWB_TWR_UNEXPECTED_MASTER) || (result_etwr == UWB_TWR_TIMEOUT)){
+            uwb_etwr_result_t result_etwr = uwb_extended_twr(result_sync);
+
+            if ((result_etwr == UWB_TWR_UNEXPECTED_MASTER) || (result_etwr == UWB_TWR_TIMEOUT)){
+                HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
+                continue;
+            } 
+
+            distance_calculate(result_etwr);
+
+            uint32_t sleep_time = uwb_share (result_etwr, DEEP_SLEEP); 
+            sleep_time = tx_err_watchdog(result_sync, result_etwr, sleep_time);
+
             HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
-            continue;
-        } 
 
-        distance_calculate(result_etwr);
+            uint32_t t_start = osKernelGetTickCount();
 
-        uint32_t sleep_time = uwb_share (result_etwr, DEEP_SLEEP); 
-        sleep_time = tx_err_watchdog(result_sync, result_etwr, sleep_time);
+            dwm_sleep();
 
-        HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
+            if (boot_cfg.valid){
+                ekf_step(0, 0); //TODO, setup IMU inputs
+                network_print_positions();
 
-        ekf_step(0, 0);//TODO update EKF with new distance measurements before sleeping
+            }
 
+            bool rst_requested = uart_periodic_poll();
+            if (rst_requested){
+                mprintf("UART requested reset\r\n");
+                osDelay(100);
+                NVIC_SystemReset();
+            }
+
+            uint32_t elapsed = osKernelGetTickCount() - t_start;
+
+            if (elapsed < sleep_time){
+                osDelay(sleep_time - elapsed);
+            }
+
+            dwm_wakeup();
+        }
+
+
+    } else {
         dwm_sleep();
-        network_print_positions();
-        osDelay(sleep_time);
-        dwm_wakeup();
+        while(1) {
+            bool rst_requested = uart_periodic_poll();
+            if (rst_requested){
+                mprintf("UART requested reset\r\n");
+                osDelay(100);        // let RST-ACK finish transmitting before reset
+                NVIC_SystemReset();
+            }
+            osDelay(1000);
+        }
     }
     
 

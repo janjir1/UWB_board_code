@@ -754,6 +754,12 @@ void network_print_certainty(void)
 
 void network_print_positions(void)
 {
+    mprintf("[POS] 0x%04X %.2f %.2f %.2f\n",
+                net.self.id,
+                net.self.pos[0],
+                net.self.pos[1],
+                net.self.pos[2]);
+                
     for (int i = 0; i < (int)net.count; i++) {
         mprintf("[POS] 0x%04X %.2f %.2f %.2f\n",
                 net.peers[i].id,
