@@ -225,10 +225,10 @@ void StartRangingTask(void *argument) {
                 {
                     
                     HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
-                    osDelay(10); //finish what needs to be done
+                    osDelay(20); //finish what needs to be done
                     HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
 
-                    sleep_stop1_ms(remaining-10);
+                    sleep_stop1_ms(remaining-20);
                     //osDelay(remaining);
                 }
 
