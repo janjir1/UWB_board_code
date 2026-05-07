@@ -1,6 +1,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include "main.h"
 #include "my_print.h"
 #include "usbd_cdc_if.h"
@@ -146,4 +147,9 @@ void PrintTask(void *arg)
         }
 #endif
     }
+}
+
+bool get_usb_ready(void)
+{
+    return (hUsbDeviceFS.dev_state == USBD_STATE_CONFIGURED);
 }

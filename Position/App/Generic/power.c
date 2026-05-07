@@ -27,9 +27,7 @@ void power_read(void)
     battery_status.is_charging    = (HAL_GPIO_ReadPin(CHRG_IND_GPIO_Port, CHRG_IND_Pin) == GPIO_PIN_RESET);
     battery_status.charge_complete= (HAL_GPIO_ReadPin(CHRG_STDBY_GPIO_Port, CHRG_STDBY_Pin) == GPIO_PIN_RESET);
 
-    /* --- ADC: wake up, calibrate, sample, sleep --- */
-
-    HAL_Delay(1);                                       // regulator startup: t_ADCVREG_STUP = 20 µs min
+    osDelay(1);    
 
     HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);   // ~3 µs @ 312 kHz ADC clk
 

@@ -105,6 +105,9 @@ void Error_Handler(void);
   extern SPI_HandleTypeDef hspi2;
   extern UART_HandleTypeDef hlpuart1;
   extern ADC_HandleTypeDef hadc1;
+  extern LPTIM_HandleTypeDef hlptim1;
+  extern void SystemClock_Config(void);
+  void ReinitAdc(void);
 #else
   extern I2C_HandleTypeDef hi2c1;
   extern USART_HandleTypeDef husart2;

@@ -24,6 +24,7 @@ add_library(app STATIC
     Calculations/ekf.c
     Generic/UART.h
     Generic/power.c
+    Generic/sleep.c
 )
 
 target_include_directories(app PUBLIC

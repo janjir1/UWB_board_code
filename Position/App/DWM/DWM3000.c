@@ -23,6 +23,7 @@
 #include "../Calculations/ekf.h"
 #include "uart.h"
 #include "power.h"
+#include "sleep.h"
 
 #define U64_HI(x)  ((uint32_t)((x) >> 32))
 #define U64_LO(x)  ((uint32_t)((x) & 0xFFFFFFFFU))
@@ -90,13 +91,13 @@ void low_battery_check(void){
         for (int i = 0; i < 3; i++)
         {
             HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_SET);
-            HAL_Delay(200);
+            osDelay(200);
             HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_RESET);
-            HAL_Delay(200);
+            osDelay(200);
         }
 
         __HAL_PWR_CLEAR_FLAG(PWR_FLAG_WUF2);
-        HAL_PWREx_EnterSHUTDOWNMode();   // does not return
+        HAL_PWREx_EnterSHUTDOWNMode();
     }
 
     return;
@@ -213,8 +214,26 @@ void StartRangingTask(void *argument) {
             uint32_t elapsed = osKernelGetTickCount() - t_start;
 
             if (elapsed < sleep_time){
-                osDelay(sleep_time - elapsed);
+                uint32_t remaining = sleep_time - elapsed;
+                 //osDelay(remaining);
+
+                 if (get_usb_ready())
+                {
+                    osDelay(remaining);
+                }
+                else
+                {
+                    
+                    HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
+                    osDelay(10); //finish what needs to be done
+                    HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
+
+                    sleep_stop1_ms(remaining-10);
+                    //osDelay(remaining);
+                }
+
             }
+                
 
             dwm_wakeup();
         }
@@ -229,6 +248,7 @@ void StartRangingTask(void *argument) {
                 osDelay(100);        // let RST-ACK finish transmitting before reset
                 NVIC_SystemReset();
             }
+            osDelay(1000);
         }
     }
     

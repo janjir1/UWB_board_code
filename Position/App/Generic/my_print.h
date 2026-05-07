@@ -7,6 +7,7 @@ extern "C" {
 
 
 #include "main.h"
+#include <stdbool.h>
 
 #define STlink 1
 #define USB_CDC 2
@@ -23,6 +24,7 @@ extern "C" {
 // Function Prototype
 void mprintf(const char *format, ...);
 void PrintTask(void *arg);
+bool get_usb_ready(void);
 
 #ifdef __cplusplus
 }
