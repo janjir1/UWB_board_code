@@ -36,9 +36,9 @@ static volatile bool     uart_rst_phase = false;
 
 static const ekf_node_hint_t ekf_pos_hints_default[4] = {
     { 0x63D8u,  0.0f,  0.0f,  0.0f },
-    { 0x91EDu,  1.0f,  1.0f,  2.0f },
-    { 0xC019u, -2.0f,  4.0f, -0.20f },
-    { 0x28CCu, -3.0f,  4.0f,  2.5f },
+    { 0x91EDu,  -2.0f,  2.0f,  0.586f },
+    { 0xC019u, 1.0f,  2.0f, -0.447f },
+    { 0x28CCu, -3.0f,  -1.0f,  -0.064f },
 };
 
 static void boot_config_load_defaults(boot_config_t *cfg)
@@ -134,6 +134,10 @@ boot_config_t uart_boot_config_read(void)
     uint16_t rx_len;
 
     boot_config_load_defaults(&boot_cfg);
+
+
+    boot_cfg.valid = true;
+    return boot_cfg;
 
     if (!uart_boot_rx_done || uart_boot_rx_error || uart_boot_rx_len == 0) {
         mprintf("[BOOT] no valid rx (done=%d err=%d len=%u)\r\n",

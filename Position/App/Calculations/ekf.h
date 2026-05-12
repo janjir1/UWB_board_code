@@ -103,7 +103,7 @@ extern const uint16_t EKF_ANCHOR_IDS[EKF_NUM_ANCHORS];
  *  estimated anchor axis satisfies  P[k][k] < EKF_ANCHOR_P_CONVERGED.
  *  0.5 m²  ≈  ±0.71 m std-dev.  Increase for a faster but noisier survey;
  *  decrease for a more accurate anchor map (takes longer).               */
-#define EKF_ANCHOR_P_CONVERGED   0.2f
+#define EKF_ANCHOR_P_CONVERGED   0.02f
 
 /** Minimum EKF steps before convergence is declared, regardless of P.
  *  Guards against premature lock-in during the first noisy measurements. */
@@ -129,7 +129,7 @@ extern const uint16_t EKF_ANCHOR_IDS[EKF_NUM_ANCHORS];
 
 #define EKF_SIGMA_MIN            0.05f   /* sigma_d @ certainty=255  (m)        */
 #define EKF_SIGMA_MAX            0.8f    /* sigma_d @ certainty=0    (m)        */
-#define EKF_Q_Z_POS              0.01f  /* Process noise — Z axis   (m²/step)  */
+#define EKF_Q_Z_POS              0.0f  /* Process noise — Z axis   (m²/step)  */
 #define EKF_Q_H_FLOOR            0.002f  /* Horizontal noise floor   (m²/step)  */
 #define EKF_Q_H_VEL_SCALE        2.0f    /* extra variance per (v·dt)² when moving */
 #define EKF_OUTLIER_GATE_POS     2.5f    /* Reject |innov| > gate·√S            */

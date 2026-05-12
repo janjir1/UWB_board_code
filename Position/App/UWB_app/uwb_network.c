@@ -449,8 +449,7 @@ uint16_t network_get_highest_uncertainty(void)
             continue;
         }
 
-        /* Priority-node shortcut: if 0xA262 appears in the peer
-         * list and we are not that node ourselves, return it now. */
+         
         if (check_priority && (pid == PRIORITY_NODE)) {
             return PRIORITY_NODE;
         }

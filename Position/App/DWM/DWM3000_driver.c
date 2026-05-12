@@ -158,6 +158,17 @@ bool dwm_selftest(void)
     return true;
 }
 
+uint16_t dwm_get_ant_delay(uint16_t addr){
+    switch(addr){
+        case 0x63D8: return DWM_ANT_DELAY + 58u;
+        case 0xC019: return DWM_ANT_DELAY + 55u;
+        case 0x91ED: return DWM_ANT_DELAY + 59u;
+        case 0xA262: return DWM_ANT_DELAY + 61u;
+        case 0x28CC: return DWM_ANT_DELAY + 58u;
+        default: return DWM_ANT_DELAY + 58u;
+    }
+}
+
 /*! ------------------------------------------------------------------------------------------------------------------
  * @brief Restore runtime-only settings that are not saved to AON and are lost on sleep/reset.
  *        Must be called both at startup (via dwm_configure) and after every wakeup (via dwm_wakeup).
@@ -169,8 +180,8 @@ bool dwm_selftest(void)
  */
 void dwm_restore_runtime(uint16_t addr)
 {
-    dwt_setrxantennadelay(DWM_ANT_DELAY);
-    dwt_settxantennadelay(DWM_ANT_DELAY);
+    dwt_setrxantennadelay(dwm_get_ant_delay(addr));
+    dwt_settxantennadelay(dwm_get_ant_delay(addr));
     dwt_setpanid(DWM_PAN_ID);
     dwt_setaddress16(addr);
     dwt_setinterrupt(DWM_IRQ_MASK, 0, DWT_ENABLE_INT);

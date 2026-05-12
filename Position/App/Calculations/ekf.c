@@ -25,6 +25,14 @@ extern uint32_t HAL_GetTick(void);
 /* Spread of the Xorshift32 random seed used for unknown tag nodes (metres). */
 #define EKF_INIT_RAND_M  2.0f
 
+/* ============================================================================
+ * HARDCODED Z HEIGHTS (experiment — quick and dirty)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Anchor Z is supplied via the hint table (hint->z is now used directly).
+ * Tag Z is pinned to this constant for the duration of the experiment.
+ * ============================================================================ */
+#define EKF_TAG_HARDCODED_Z   -0.589f   /* tag height above floor, metres */
+
 static const ekf_node_hint_t *g_ekf_pos_hints = NULL;
 static uint8_t g_ekf_pos_hints_n = 0;
 
@@ -227,17 +235,14 @@ static void publish_self_position(const float pos[3])
  * Slot management
  * ============================================================================ */
 
-static void reset_slot_covariance(int slot, int n_active)
-{
+static void resetSlotCovariance(int slot, int nActive) {
     int base = slot * 3;
     for (int k = 0; k < 3; k++) {
         int row = base + k;
-        for (int j = 0; j < n_active; j++) {
-            ekf.P[row][j] = 0.0f;
-            ekf.P[j][row] = 0.0f;
-        }
+        for (int j = 0; j < nActive; j++) { ekf.P[row][j] = 0.0f; ekf.P[j][row] = 0.0f; }
         ekf.P[row][row] = EKF_INIT_P_POS;
     }
+    ekf.P[base+2][base+2] = 0.0f;
 }
 
 static void reset_slot_motion(int p)
@@ -272,7 +277,7 @@ static void alloc_slot(int slot, uint16_t id, int n_after)
              * with a random sphere placement when the first range arrives. */
             ekf.x[slot*3+0] = hint->x;
             ekf.x[slot*3+1] = hint->y;
-            ekf.x[slot*3+2] = hint->z;
+            ekf.x[slot*3+2] = hint->z;   /* anchor Z from hint */
             ekf.peer_seeded[slot]    = true;
             ekf.peer_imu_valid[slot] = true;
             slot_last_x[slot]        = hint->x;
@@ -288,7 +293,7 @@ static void alloc_slot(int slot, uint16_t id, int n_after)
             rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
             ekf.x[slot*3+1] = ((float)(rng & 0xFFFFu) / 32767.5f - 1.0f) * EKF_INIT_RAND_M;
             rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
-            ekf.x[slot*3+2] = ((float)(rng & 0xFFFFu) / 65535.0f) * EKF_INIT_RAND_M;
+            ekf.x[slot*3+2] = EKF_TAG_HARDCODED_Z;   /* hardcoded tag Z */
         }
     }
     mprintf("[EKF] alloc slot=%d id=0x%04X %s pos=(%.2f, %.2f, %.2f)\n",
@@ -296,9 +301,10 @@ static void alloc_slot(int slot, uint16_t id, int n_after)
             ekf.peer_seeded[slot] ? "hint" : "rng ",
             (double)ekf.x[slot*3+0], (double)ekf.x[slot*3+1], (double)ekf.x[slot*3+2]);
 
-    ekf.Q[slot*3+2][slot*3+2] = EKF_Q_Z_POS;
+    ekf.Q[slot*3+2][slot*3+2] = 0.0f;
     reset_slot_motion(slot);
-    reset_slot_covariance(slot, n_after);
+    resetSlotCovariance(slot, n_after);
+    
 }
 
 /**
@@ -316,7 +322,7 @@ static void slot_reconnect(int p)
     ekf.peer_away[p]      = false;
     ekf.peer_imu_valid[p] = false;          /* wait for a fresh IMU packet */
     reset_slot_motion(p);                   /* clear stale EMA / heading   */
-    reset_slot_covariance(p, (int)ekf.n_peers * 3); /* inflate P, zero cross-terms */
+    resetSlotCovariance(p, (int)ekf.n_peers * 3); /* inflate P, zero cross-terms */
     /* peer_seeded[p] and x[p*3..] intentionally preserved. */
 }
 
@@ -367,7 +373,7 @@ static void seed_slot_centered(int p,
 
     ekf.x[p*3+0] = cx + xy_r * cosf(seed_angle);
     ekf.x[p*3+1] = cy + xy_r * sinf(seed_angle);
-    ekf.x[p*3+2] = cz + range_m * z_frac;
+    ekf.x[p*3+2] = EKF_TAG_HARDCODED_Z;   /* hardcoded tag Z — ignore sphere Z */
 
     ekf.peer_seeded[p]    = true;
     ekf.peer_imu_valid[p] = true;
@@ -491,7 +497,7 @@ static void predict_anchor_slot(int p, float dt_s)
 {
     int   base = p * 3;
     float q    = EKF_Q_H_FLOOR_STATIONARY * (dt_s / EKF_DT_NOM_S);
-    for (int k = 0; k < 3; k++) {
+    for (int k = 0; k < 2; k++) {
         ekf.P[base+k][base+k] += q;
         if (ekf.P[base+k][base+k] > EKF_P_MAX)
             ekf.P[base+k][base+k] = EKF_P_MAX;
@@ -520,7 +526,7 @@ static void predict_slot(int p, float vh_raw, float vz_raw, float dt_s)
     slot_vel_ema_z[p] = EKF_VEL_EMA_ALPHA * vz_eff
                       + (1.0f - EKF_VEL_EMA_ALPHA) * slot_vel_ema_z[p];
 
-    ekf.x[base + 2] += slot_vel_ema_z[p] * dt_s;
+    ekf.x[base + 2] = EKF_TAG_HARDCODED_Z;   /* hardcoded tag Z — suppress Z drift */
 
     if (slot_hdg_valid[p] && slot_vel_ema_h[p] > EKF_IMU_DEADBAND_MS) {
         ekf.x[base + 0] += slot_hdg_x[p] * slot_vel_ema_h[p] * dt_s;
@@ -530,7 +536,7 @@ static void predict_slot(int p, float vh_raw, float vz_raw, float dt_s)
     /* Max-displacement clamp */
     float ddx  = ekf.x[base+0] - pre_x;
     float ddy  = ekf.x[base+1] - pre_y;
-    float ddz  = ekf.x[base+2] - pre_z;
+    float ddz  = 0.0f;
     float dist = sqrtf(ddx*ddx + ddy*ddy + ddz*ddz);
     if (dist > EKF_MAX_STEP_M) {
         float scale = EKF_MAX_STEP_M / dist;
@@ -641,7 +647,7 @@ static void sync_peers_phase1(void)
             if (!ekf.peer_away[p]) {
                 ekf.peer_away[p] = true;
                 reset_slot_motion(p);
-                reset_slot_covariance(p, n);
+                resetSlotCovariance(p, n);
             }
         } else if (ekf.peer_away[p]) {
             slot_reconnect(p);
@@ -944,7 +950,7 @@ static void sync_peers_phase2(void)
             if (!ekf.peer_away[p]) {
                 ekf.peer_away[p] = true;
                 reset_slot_motion(p);
-                reset_slot_covariance(p, n);
+                resetSlotCovariance(p, n);
                 /* x[p*3..] and peer_seeded[p] preserved — last known position kept */
             }
         } else if (ekf.peer_away[p]) {
@@ -1005,9 +1011,12 @@ static void ekf_init_phase2(void)
     }
 
     int n = (int)ekf.n_peers * 3;
-    for (int i = 0; i < n; i++) ekf.P[i][i] = EKF_INIT_P_POS;
+    for (int i = 0; i < n; i++) {
+        if (i % 3 == 2) continue;   // Z already pinned to 0.0f in resetSlotCovariance
+        ekf.P[i][i] = EKF_INIT_P_POS;
+    }
     for (int p = 0; p < (int)ekf.n_peers; p++)
-        ekf.Q[p*3+2][p*3+2] = EKF_Q_Z_POS;
+        ekf.Q[p*3+2][p*3+2] = 0.0f;
 }
 
 /**
@@ -1190,7 +1199,7 @@ void ekf_init(const ekf_node_hint_t *pos_hints, uint8_t pos_hints_n)
         reset_motion_arrays();
         for (int p = 0; p < (int)ekf.n_peers; p++) {
             reset_slot_motion(p);
-            reset_slot_covariance(p, n);
+            resetSlotCovariance(p, n);
             ekf.peer_imu_valid[p] = (ekf.peer_ids[p] == own_id);
         }
         ekf.last_tick_ms = HAL_GetTick();
@@ -1243,9 +1252,12 @@ void ekf_init(const ekf_node_hint_t *pos_hints, uint8_t pos_hints_n)
     }
 
     int n = (int)ekf.n_peers * 3;
-    for (int i = 0; i < n; i++) ekf.P[i][i] = EKF_INIT_P_POS;
+    for (int i = 0; i < n; i++) {
+        if (i % 3 == 2) continue;   // Z already pinned to 0.0f in resetSlotCovariance
+        ekf.P[i][i] = EKF_INIT_P_POS;
+    }
     for (int p = 0; p < (int)ekf.n_peers; p++)
-        ekf.Q[p*3+2][p*3+2] = EKF_Q_Z_POS;
+        ekf.Q[p*3+2][p*3+2] = 0.0f;
 }
 
 

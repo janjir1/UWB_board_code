@@ -538,7 +538,7 @@ uwb_etwr_result_t uwb_extended_twr(uwb_sync_result_t sync_result)
             mprintf("ERROR: no peers — skipping TWR\r\n");
             return UWB_TWR_NOT_ENOUGH_DEVICES;
         }
-        network_print_certainty();
+        
         mprintf("[TWR] M peers=%d\r\n", network_get_count());
         uint16_t target_id = network_get_highest_uncertainty();
         if (target_id == 0) {
@@ -828,6 +828,15 @@ void uwb_read_share(const msg_share_t *in)
 
             network_set_distance(in->node_ids[i], in->node_ids[j], in->distance_mm[idx]);
             network_set_distance(in->node_ids[j], in->node_ids[i], in->distance_mm[idx]);
+            uint16_t stored = network_get_distance(in->node_ids[i], in->node_ids[j]);
+            uint8_t cert  = network_get_certainty(in->node_ids[i], in->node_ids[j]);
+            mprintf("[SHARE_RX] stored=%u\n",stored);
+            mprintf("[SHARE_RX]   pair 0x%04X-0x%04X  dist_raw=%5u stored=%u cert=%3u%s\n",
+                    in->node_ids[i], in->node_ids[j],
+                    in->distance_mm[idx],
+                    stored,
+                    cert,
+                    in->distance_mm[idx] == 0xFFFFu ? " (sentinel/skipped)" : "");
 
             node_peer_state_t *s = network_get_peer_state(in->node_ids[i], in->node_ids[j]);
             if (s) s->certainty = in->accuracy[idx];
@@ -853,12 +862,13 @@ void uwb_read_share(const msg_share_t *in)
         }
         mprintf("[SHARE_RX]   node 0x%04X  vel_vert=%3u vel_horiz=%3u\n", id, vv, vh);
     }
-
+    /*
     for (uint8_t i = 0; i < n; i++) {
         for (uint8_t j = i + 1u; j < n; j++) {
             uint8_t idx = (uint8_t)(i * (2u * n - i - 1u) / 2u + (j - i - 1u));
             double stored = network_get_distance(in->node_ids[i], in->node_ids[j]);
             uint8_t cert  = network_get_certainty(in->node_ids[i], in->node_ids[j]);
+            
             mprintf("[SHARE_RX]   pair 0x%04X-0x%04X  dist_raw=%5u stored=%.1f cert=%3u%s\n",
                     in->node_ids[i], in->node_ids[j],
                     in->distance_mm[idx],
@@ -867,6 +877,7 @@ void uwb_read_share(const msg_share_t *in)
                     in->distance_mm[idx] == 0xFFFFu ? " (sentinel/skipped)" : "");
         }
     }
+        */
 }
 
 uint32_t uwb_share(uwb_etwr_result_t etwr_result, uint32_t sleep_time)

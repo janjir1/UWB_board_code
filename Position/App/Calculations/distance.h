@@ -20,7 +20,7 @@ uint64_t position_calibrate_timestamp(uint64_t orig_timestamp);
 #define MAX_SECOND_ORDER   (2 * MAX_PASSIVE)                /* 10 */
 #define MAX_THIRD_ORDER    (MAX_PASSIVE * (MAX_PASSIVE - 1) / 2)  /* 10 */
 
-#define DIST_SHARE_MAX_M          200.0
+#define DIST_SHARE_MAX_M          308.26f
 #define DIST_SHARE_DIST_MAX_TICKS (DIST_SHARE_MAX_M / (SPEED_OF_LIGHT * DWT_TIME_UNITS))
 #define DIST_SHARE_TICKS_PER_LSB  (DIST_SHARE_DIST_MAX_TICKS / 65535.0)
 #define DWT_TICK_TO_US            (1.0f / 63897.6f)
