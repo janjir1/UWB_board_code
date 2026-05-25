@@ -24,7 +24,7 @@
 /* 3 metres expressed in DW3000 ticks (one-way, two-way already halved in DS-TWR):
  * ticks = metres / (c / (499.2e6 * 128 * 2)) */
 #define CALIB_ANTENNA_MIN_DIST_TICKS \
-    (3.0 * (499.2e6 * 128.0 * 2.0) / SPEED_OF_LIGHT)
+    (2.0 * (499.2e6 * 128.0 * 2.0) / SPEED_OF_LIGHT)
 
 /* Device tilt (from vertical) above which correction is skipped entirely.
  * 15° keeps the board nearly flat — null axis is close to true vertical,
@@ -34,7 +34,7 @@
 /* Within TILT_LIMIT, if the target elevation is within this many degrees
  * of the null axis elevation — flag unreliable instead of correcting.
  * Tight window: only trigger when alignment is very close to the null. */
-#define CALIB_ANTENNA_SIMILARITY_DEG        10.0f
+#define CALIB_ANTENNA_SIMILARITY_DEG        15.0f
 
 /* Target elevation above which the donut null correction is applied.
  * Below this angle the antenna is near its gain maximum — no correction.

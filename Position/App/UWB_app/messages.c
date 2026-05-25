@@ -6,8 +6,8 @@
  * private per-type encoder and decoder helpers.
  *
  * Each message type has a matching pair:
- * - @c msg_decode_<type>  — extracts fields from the raw byte buffer.
- * - @c msg_encode_<type>  — writes fields into the raw byte buffer.
+ * - @c msg_decode_<type> — extracts fields from the raw byte buffer.
+ * - @c msg_encode_<type> — writes fields into the raw byte buffer.
  *
  * The @c #ifdef UWB_DEBUG block at the bottom contains round-trip
  * self-tests for every message type; enable by defining @c UWB_DEBUG.
@@ -22,31 +22,49 @@
 #include "cmsis_os.h"
 #include "cmsis_os2.h"
 
-/* ── Forward declarations ───────────────────────────────────────────────── */
-static void     msg_decode_sync    (const dwm_rx_frame_t *frame, msg_sync_t     *out);
-static void     msg_decode_poll    (const dwm_rx_frame_t *frame, msg_poll_t     *out);
-static void     msg_decode_response(const dwm_rx_frame_t *frame, msg_response_t *out);
-static void     msg_decode_final   (const dwm_rx_frame_t *frame, msg_final_t    *out);
-static void     msg_decode_share   (const dwm_rx_frame_t *frame, msg_share_t    *out);
-static void     msg_decode_passive (const dwm_rx_frame_t *frame, msg_passive_t  *out);
+/* -- Forward declarations ------------------------------------------------- */
+static void msg_decode_sync    (const dwm_rx_frame_t *frame, msg_sync_t *out);
+static void msg_decode_poll    (const dwm_rx_frame_t *frame, msg_poll_t *out);
+static void msg_decode_response(const dwm_rx_frame_t *frame, msg_response_t *out);
+static void msg_decode_final   (const dwm_rx_frame_t *frame, msg_final_t *out);
+static void msg_decode_share   (const dwm_rx_frame_t *frame, msg_share_t *out);
+static void msg_decode_passive (const dwm_rx_frame_t *frame, msg_passive_t *out);
 
-static uint16_t msg_encode_sync    (const msg_sync_t     *in, uint8_t *buf);
-static uint16_t msg_encode_poll    (const msg_poll_t     *in, uint8_t *buf);
-static uint16_t msg_encode_response(const msg_response_t *in, uint8_t *buf);
-static uint16_t msg_encode_final   (const msg_final_t    *in, uint8_t *buf);
-static uint16_t msg_encode_share   (const msg_share_t    *in, uint8_t *buf);
-static uint16_t msg_encode_passive (const msg_passive_t  *in, uint8_t *buf);
+static uint16_t msg_encode_sync    (const msg_sync_t *in,      uint8_t *buf);
+static uint16_t msg_encode_poll    (const msg_poll_t *in,      uint8_t *buf);
+static uint16_t msg_encode_response(const msg_response_t *in,  uint8_t *buf);
+static uint16_t msg_encode_final   (const msg_final_t *in,     uint8_t *buf);
+static uint16_t msg_encode_share   (const msg_share_t *in,     uint8_t *buf);
+static uint16_t msg_encode_passive (const msg_passive_t *in,   uint8_t *buf);
 
-/* ── Utility ────────────────────────────────────────────────────────────── */
+/* -- Utility -------------------------------------------------------------- */
 
+/**
+ * @brief Serialize a 64-bit timestamp into a little-endian byte buffer.
+ *
+ * Writes @ref MSG_TS_LEN bytes to @p buf, LSB first.
+ *
+ * @param[in]  ts   64-bit DWM3000 timestamp value.
+ * @param[out] buf  Destination buffer of at least @ref MSG_TS_LEN bytes.
+ */
 void u64_to_ts_buf(uint64_t ts, uint8_t *buf)
 {
     for (int i = 0; i < MSG_TS_LEN; i++)
         buf[i] = (ts >> (i * 8)) & 0xFF;
 }
 
-/* ── Public API ─────────────────────────────────────────────────────────── */
+/* -- Public API ----------------------------------------------------------- */
 
+/**
+ * @brief Decode a raw RX frame into a typed message struct.
+ *
+ * Reads the message type byte and sender/receiver address fields, then
+ * dispatches to the appropriate per-type decoder. Sets @c msg_decoded->type
+ * to @c MSG_TYPE_ERR on an unknown type or an undersized frame.
+ *
+ * @param[in]  receive_frame  Raw frame from the DWM3000 RX buffer.
+ * @param[out] msg_decoded    Populated message struct on success.
+ */
 void msg_decode(const dwm_rx_frame_t *receive_frame, msg_t *msg_decoded)
 {
     if (receive_frame->len < MSG_PAYLOAD_OFFSET_SEQ) {
@@ -62,37 +80,49 @@ void msg_decode(const dwm_rx_frame_t *receive_frame, msg_t *msg_decoded)
     memcpy(&msg_decoded->receiver, &receive_frame->data[MSG_OFFSET_RECEIVER], sizeof(uint16_t));
 
     switch (msg_decoded->type) {
-    case MSG_TYPE_SYNC:
-        msg_decode_sync    (receive_frame, &msg_decoded->data.sync);
-        msg_decoded->len = sizeof(msg_sync_t);
-        break;
-    case MSG_TYPE_POLL:
-        msg_decode_poll    (receive_frame, &msg_decoded->data.poll);
-        msg_decoded->len = sizeof(msg_poll_t);
-        break;
-    case MSG_TYPE_RESPONSE:
-        msg_decode_response(receive_frame, &msg_decoded->data.response);
-        msg_decoded->len = sizeof(msg_response_t);
-        break;
-    case MSG_TYPE_FINAL:
-        msg_decode_final   (receive_frame, &msg_decoded->data.final);
-        msg_decoded->len = sizeof(msg_final_t);
-        break;
-    case MSG_TYPE_SHARE:
-        msg_decode_share   (receive_frame, &msg_decoded->data.share);
-        msg_decoded->len = sizeof(msg_share_t);
-        break;
-    case MSG_TYPE_PASSIVE:
-        msg_decode_passive (receive_frame, &msg_decoded->data.passive);
-        msg_decoded->len = sizeof(msg_passive_t);
-        break;
-    default:
-        msg_decoded->type = MSG_TYPE_ERR;
-        msg_decoded->len  = 0;
-        break;
+        case MSG_TYPE_SYNC:
+            msg_decode_sync(receive_frame, &msg_decoded->data.sync);
+            msg_decoded->len = sizeof(msg_sync_t);
+            break;
+        case MSG_TYPE_POLL:
+            msg_decode_poll(receive_frame, &msg_decoded->data.poll);
+            msg_decoded->len = sizeof(msg_poll_t);
+            break;
+        case MSG_TYPE_RESPONSE:
+            msg_decode_response(receive_frame, &msg_decoded->data.response);
+            msg_decoded->len = sizeof(msg_response_t);
+            break;
+        case MSG_TYPE_FINAL:
+            msg_decode_final(receive_frame, &msg_decoded->data.final);
+            msg_decoded->len = sizeof(msg_final_t);
+            break;
+        case MSG_TYPE_SHARE:
+            msg_decode_share(receive_frame, &msg_decoded->data.share);
+            msg_decoded->len = sizeof(msg_share_t);
+            break;
+        case MSG_TYPE_PASSIVE:
+            msg_decode_passive(receive_frame, &msg_decoded->data.passive);
+            msg_decoded->len = sizeof(msg_passive_t);
+            break;
+        default:
+            msg_decoded->type = MSG_TYPE_ERR;
+            msg_decoded->len  = 0;
+            break;
     }
 }
 
+/**
+ * @brief Encode a typed message struct into a TX frame.
+ *
+ * Writes the type byte and sender/receiver address fields into a static
+ * buffer, then dispatches to the appropriate per-type encoder to fill
+ * the payload. Returns a zero-length frame if @p msg is NULL or the
+ * type is unrecognised.
+ *
+ * @param[in] msg  Message to encode.
+ * @return         Ready-to-transmit @c dwm_tx_frame_t pointing to an
+ *                 internal static buffer.
+ */
 dwm_tx_frame_t msg_encode(const msg_t *msg)
 {
     static uint8_t buf[DWM_MAX_FRAME_LEN];
@@ -106,19 +136,19 @@ dwm_tx_frame_t msg_encode(const msg_t *msg)
     memcpy(&buf[MSG_OFFSET_RECEIVER], &msg->receiver, sizeof(uint16_t));
 
     switch (msg->type) {
-    case MSG_TYPE_SYNC:     frame.len = msg_encode_sync    (&msg->data.sync,     buf); break;
-    case MSG_TYPE_POLL:     frame.len = msg_encode_poll    (&msg->data.poll,     buf); break;
-    case MSG_TYPE_RESPONSE: frame.len = msg_encode_response(&msg->data.response, buf); break;
-    case MSG_TYPE_FINAL:    frame.len = msg_encode_final   (&msg->data.final,    buf); break;
-    case MSG_TYPE_SHARE:    frame.len = msg_encode_share   (&msg->data.share,    buf); break;
-    case MSG_TYPE_PASSIVE:  frame.len = msg_encode_passive (&msg->data.passive,  buf); break;
-    default: break;
+        case MSG_TYPE_SYNC:     frame.len = msg_encode_sync    (&msg->data.sync,     buf); break;
+        case MSG_TYPE_POLL:     frame.len = msg_encode_poll    (&msg->data.poll,     buf); break;
+        case MSG_TYPE_RESPONSE: frame.len = msg_encode_response(&msg->data.response, buf); break;
+        case MSG_TYPE_FINAL:    frame.len = msg_encode_final   (&msg->data.final,    buf); break;
+        case MSG_TYPE_SHARE:    frame.len = msg_encode_share   (&msg->data.share,    buf); break;
+        case MSG_TYPE_PASSIVE:  frame.len = msg_encode_passive (&msg->data.passive,  buf); break;
+        default: break;
     }
 
     return frame;
 }
 
-/* ── Private decoders ───────────────────────────────────────────────────── */
+/* -- Private decoders ----------------------------------------------------- */
 
 /**
  * @brief Decode a SYNC message payload.
@@ -148,8 +178,7 @@ static void msg_decode_sync(const dwm_rx_frame_t *frame, msg_sync_t *out)
  */
 static void msg_decode_poll(const dwm_rx_frame_t *frame, msg_poll_t *out)
 {
-    out->seq_num     = frame->data[MSG_PAYLOAD_OFFSET_SEQ];
-
+    out->seq_num = frame->data[MSG_PAYLOAD_OFFSET_SEQ];
 }
 
 /**
@@ -163,12 +192,21 @@ static void msg_decode_poll(const dwm_rx_frame_t *frame, msg_poll_t *out)
  */
 static void msg_decode_response(const dwm_rx_frame_t *frame, msg_response_t *out)
 {
-    out->seq_num          = frame->data[MSG_PAYLOAD_OFFSET_SEQ];
-    /* -- Not in message: populated from RX frame metadata -- */
-
+    out->seq_num = frame->data[MSG_PAYLOAD_OFFSET_SEQ];
 }
 
-
+/**
+ * @brief Decode a FINAL message payload.
+ *
+ * Extracts the initiator's three timestamps (poll TX, response RX, final TX),
+ * the response antenna power difference and reliability flag, and a variable
+ * number of passive-node entries each containing an RX timestamp, power
+ * difference, node ID, and antenna reliability flag. IMU velocity components
+ * are appended after the entry list.
+ *
+ * @param[in]  frame  Raw RX frame.
+ * @param[out] out    Decoded final struct to populate.
+ */
 static void msg_decode_final(const dwm_rx_frame_t *frame, msg_final_t *out)
 {
     const uint8_t *p = &frame->data[MSG_PAYLOAD_OFFSET_SEQ];
@@ -177,31 +215,25 @@ static void msg_decode_final(const dwm_rx_frame_t *frame, msg_final_t *out)
 
     out->seq_num = *p++;
 
-    memcpy(&out->poll_tx_ts,   p, MSG_TS_LEN);      p += MSG_TS_LEN;
-    memcpy(&out->resp_rx_ts,   p, MSG_TS_LEN);      p += MSG_TS_LEN;
-    memcpy(&out->final_tx_ts,  p, MSG_TS_LEN);      p += MSG_TS_LEN;
+    memcpy(&out->poll_tx_ts,  p, MSG_TS_LEN); p += MSG_TS_LEN;
+    memcpy(&out->resp_rx_ts,  p, MSG_TS_LEN); p += MSG_TS_LEN;
+    memcpy(&out->final_tx_ts, p, MSG_TS_LEN); p += MSG_TS_LEN;
 
     memcpy(&out->resp_pwr_diff_q8, p, sizeof(int16_t)); p += sizeof(int16_t);
-    out->resp_antenna_unreliable = (*p != 0); p += 1; 
+    out->resp_antenna_unreliable = (*p != 0); p += 1;
 
     uint8_t wire_count = *p++;
     uint8_t count = wire_count > (NETWORK_MAX_PEERS - 2) ? (NETWORK_MAX_PEERS - 2) : wire_count;
     out->entry_count = count;
 
     for (int i = 0; i < wire_count; i++) {
-        if (i < count) {
-            memcpy(&out->entries[i],      p, MSG_TS_LEN);
-        }
+        if (i < count) memcpy(&out->entries[i], p, MSG_TS_LEN);
         p += MSG_TS_LEN;
 
-        if (i < count) {
-            memcpy(&out->entry_pwr_diff_q8[i], p, sizeof(int16_t));
-        }
+        if (i < count) memcpy(&out->entry_pwr_diff_q8[i], p, sizeof(int16_t));
         p += sizeof(int16_t);
 
-        if (i < count) {
-            memcpy(&out->entry_id[i],      p, sizeof(uint16_t));
-        }
+        if (i < count) memcpy(&out->entry_id[i], p, sizeof(uint16_t));
         p += sizeof(uint16_t);
 
         if (i < count) out->entry_antenna_unreliable[i] = (*p != 0);
@@ -214,7 +246,14 @@ static void msg_decode_final(const dwm_rx_frame_t *frame, msg_final_t *out)
 
 /**
  * @brief Flat upper-triangle pair index for nodes at positions i < j.
- *        (0,1)→0  (0,2)→1  (0,3)→2  (1,2)→3  (1,3)→4  (2,3)→5  …
+ *
+ * Maps a node pair (i, j) to a compact array index over the upper triangle:
+ * (0,1)→0, (0,2)→1, (0,3)→2, (1,2)→3, (1,3)→4, (2,3)→5, …
+ *
+ * @param i  Row index (must be < j).
+ * @param j  Column index (must be > i).
+ * @param n  Total number of nodes.
+ * @return   Flat index into the upper-triangle array.
  */
 static inline uint8_t share_pair_index(uint8_t i, uint8_t j, uint8_t n)
 {
@@ -222,11 +261,14 @@ static inline uint8_t share_pair_index(uint8_t i, uint8_t j, uint8_t n)
 }
 
 /**
- * @brief Decode a SHARE message payload. 
+ * @brief Decode a SHARE message payload.
  *
- * Pair ownership is recovered from node_ids[] ordering — no per-pair
- * IDs are transmitted. Use share_pair_index(i, j, out->node_count)
- * to map a pair back to node_ids[i] ↔ node_ids[j].
+ * Pair ownership is recovered from @c node_ids[] ordering — no per-pair
+ * IDs are transmitted on the wire. Use @ref share_pair_index(i, j, out->node_count)
+ * to map a pair back to node_ids[i] <-> node_ids[j].
+ *
+ * @param[in]  frame  Raw RX frame.
+ * @param[out] out    Decoded share struct to populate.
  */
 static void msg_decode_share(const dwm_rx_frame_t *frame, msg_share_t *out)
 {
@@ -241,9 +283,7 @@ static void msg_decode_share(const dwm_rx_frame_t *frame, msg_share_t *out)
     out->node_count = n;
 
     for (uint8_t i = 0; i < wire_n; i++) {
-        if (i < n) {
-            memcpy(&out->node_ids[i], p, sizeof(uint16_t));
-        }
+        if (i < n) memcpy(&out->node_ids[i], p, sizeof(uint16_t));
         p += sizeof(uint16_t);
     }
 
@@ -251,7 +291,7 @@ static void msg_decode_share(const dwm_rx_frame_t *frame, msg_share_t *out)
         if (i < n) out->vel_vert[i] = *p;
         p++;
     }
-    
+
     for (uint8_t i = 0; i < wire_n; i++) {
         if (i < n) out->vel_horiz[i] = *p;
         p++;
@@ -278,7 +318,17 @@ static void msg_decode_share(const dwm_rx_frame_t *frame, msg_share_t *out)
     }
 }
 
-
+/**
+ * @brief Decode a PASSIVE message payload.
+ *
+ * Extracts the passive node's poll and response RX timestamps with
+ * their power differences and antenna reliability flags, followed by
+ * the passive TX timestamp, a variable-length list of additional
+ * passive-node entries, and IMU velocity components.
+ *
+ * @param[in]  frame  Raw RX frame.
+ * @param[out] out    Decoded passive struct to populate.
+ */
 static void msg_decode_passive(const dwm_rx_frame_t *frame, msg_passive_t *out)
 {
     const uint8_t *p = &frame->data[MSG_PAYLOAD_OFFSET_SEQ];
@@ -287,23 +337,21 @@ static void msg_decode_passive(const dwm_rx_frame_t *frame, msg_passive_t *out)
 
     out->seq_num = *p++;
 
-    memcpy(&out->poll_rx_ts,   p, MSG_TS_LEN);       p += MSG_TS_LEN;
-    memcpy(&out->poll_pwr_diff_q8, p, sizeof(int16_t));  p += sizeof(int16_t);
-    out->poll_antenna_unreliable = (*p != 0); p += 1;  
+    memcpy(&out->poll_rx_ts,       p, MSG_TS_LEN);      p += MSG_TS_LEN;
+    memcpy(&out->poll_pwr_diff_q8, p, sizeof(int16_t)); p += sizeof(int16_t);
+    out->poll_antenna_unreliable = (*p != 0);            p += 1;
 
-    memcpy(&out->resp_rx_ts,   p, MSG_TS_LEN);       p += MSG_TS_LEN;
-    memcpy(&out->resp_pwr_diff_q8, p, sizeof(int16_t));  p += sizeof(int16_t);
-    out->resp_antenna_unreliable = (*p != 0); p += 1;
-
-    /* final_rx_ts removed — PASSIVE now transmits before FINAL */
+    memcpy(&out->resp_rx_ts,       p, MSG_TS_LEN);      p += MSG_TS_LEN;
+    memcpy(&out->resp_pwr_diff_q8, p, sizeof(int16_t)); p += sizeof(int16_t);
+    out->resp_antenna_unreliable = (*p != 0);            p += 1;
 
     memcpy(&out->passive_tx_ts, p, MSG_TS_LEN); p += MSG_TS_LEN;
 
     out->entry_count = *p++;
     for (int i = 0; i < out->entry_count && i < (NETWORK_MAX_PEERS - 2); i++) {
-        memcpy(&out->entries[i],       p, MSG_TS_LEN);       p += MSG_TS_LEN;
-        memcpy(&out->entry_pwr_diff_q8[i], p, sizeof(int16_t)); p += sizeof(int16_t);
-        memcpy(&out->entry_ids[i],     p, sizeof(uint16_t)); p += sizeof(uint16_t);
+        memcpy(&out->entries[i],          p, MSG_TS_LEN);      p += MSG_TS_LEN;
+        memcpy(&out->entry_pwr_diff_q8[i],p, sizeof(int16_t)); p += sizeof(int16_t);
+        memcpy(&out->entry_ids[i],        p, sizeof(uint16_t)); p += sizeof(uint16_t);
         out->entry_antenna_unreliable[i] = (*p != 0); p += 1;
     }
 
@@ -311,7 +359,7 @@ static void msg_decode_passive(const dwm_rx_frame_t *frame, msg_passive_t *out)
     memcpy(&out->IMU_vel_vert,  p, sizeof(float)); p += sizeof(float);
 }
 
-/* ── Private encoders ───────────────────────────────────────────────────── */
+/* -- Private encoders ----------------------------------------------------- */
 
 /**
  * @brief Encode a SYNC message payload into the wire buffer.
@@ -345,7 +393,7 @@ static uint16_t msg_encode_sync(const msg_sync_t *in, uint8_t *buf)
  *
  * Wire layout:
  * @code
- * [SEQ]  1 byte
+ * [SEQ] 1 byte
  * @endcode
  *
  * @note @c poll_rssi_q8 and @c poll_fp_q8 are not transmitted —
@@ -366,7 +414,7 @@ static uint16_t msg_encode_poll(const msg_poll_t *in, uint8_t *buf)
  *
  * Wire layout:
  * @code
- * [SEQ]  1 byte
+ * [SEQ] 1 byte
  * @endcode
  *
  * @note The RESPONSE carries no timestamps on the wire. The responder's
@@ -383,7 +431,27 @@ static uint16_t msg_encode_response(const msg_response_t *in, uint8_t *buf)
     return MSG_PAYLOAD_OFFSET_SEQ + 1;
 }
 
-
+/**
+ * @brief Encode a FINAL message payload into the wire buffer.
+ *
+ * Wire layout:
+ * @code
+ * [SEQ]                    1 byte
+ * [POLL_TX_TS]             MSG_TS_LEN bytes
+ * [RESP_RX_TS]             MSG_TS_LEN bytes
+ * [FINAL_TX_TS]            MSG_TS_LEN bytes
+ * [RESP_PWR_DIFF_Q8]       2 bytes  (int16_t)
+ * [RESP_ANTENNA_UNRELIABLE] 1 byte
+ * [ENTRY_COUNT]            1 byte
+ * [ENTRIES × entry_count]  (MSG_TS_LEN + 2 + 2 + 1) bytes each
+ * [IMU_VEL_HORIZ]          4 bytes  (float)
+ * [IMU_VEL_VERT]           4 bytes  (float)
+ * @endcode
+ *
+ * @param[in]  in   Populated final struct.
+ * @param[out] buf  Output buffer of sufficient size.
+ * @return Total bytes written.
+ */
 static uint16_t msg_encode_final(const msg_final_t *in, uint8_t *buf)
 {
     uint8_t *p = &buf[MSG_PAYLOAD_OFFSET_SEQ];
@@ -399,10 +467,10 @@ static uint16_t msg_encode_final(const msg_final_t *in, uint8_t *buf)
 
     *p++ = in->entry_count;
     for (int i = 0; i < in->entry_count; i++) {
-        u64_to_ts_buf(in->entries[i], p);                    p += MSG_TS_LEN;
-        memcpy(p, &in->entry_pwr_diff_q8[i], sizeof(int16_t));  p += sizeof(int16_t);
-        memcpy(p, &in->entry_id[i],      sizeof(uint16_t)); p += sizeof(uint16_t);
-        p[0] = in->entry_antenna_unreliable[i] ? 1 : 0; p += 1;
+        u64_to_ts_buf(in->entries[i], p);                          p += MSG_TS_LEN;
+        memcpy(p, &in->entry_pwr_diff_q8[i], sizeof(int16_t));    p += sizeof(int16_t);
+        memcpy(p, &in->entry_id[i],          sizeof(uint16_t));   p += sizeof(uint16_t);
+        p[0] = in->entry_antenna_unreliable[i] ? 1 : 0;           p += 1;
     }
 
     memcpy(p, &in->IMU_vel_horiz, sizeof(float)); p += sizeof(float);
@@ -413,11 +481,27 @@ static uint16_t msg_encode_final(const msg_final_t *in, uint8_t *buf)
 
 /**
  * @brief Encode a SHARE message payload into the wire buffer.
+ *
+ * Wire layout:
+ * @code
+ * [SEQ]                          1 byte
+ * [SLEEP_TIME]                   4 bytes  (uint32_t)
+ * [NODE_COUNT]                   1 byte
+ * [NODE_IDS × node_count]        node_count × 2 bytes
+ * [VEL_VERT × node_count]        node_count × 1 byte
+ * [VEL_HORIZ × node_count]       node_count × 1 byte
+ * [DISTANCE_MM × pairs]          pairs × 2 bytes  (upper triangle)
+ * [ACCURACY × pairs]             pairs × 1 byte
+ * @endcode
+ *
+ * @param[in]  in   Populated share struct.
+ * @param[out] buf  Output buffer of sufficient size.
+ * @return Total bytes written.
  */
 static uint16_t msg_encode_share(const msg_share_t *in, uint8_t *buf)
 {
     uint8_t *p = &buf[MSG_PAYLOAD_OFFSET_SEQ];
-    uint8_t n = in->node_count;
+    uint8_t  n = in->node_count;
     if (n > NETWORK_MAX_PEERS) n = NETWORK_MAX_PEERS;
 
     *p++ = in->seq_num;
@@ -448,30 +532,51 @@ static uint16_t msg_encode_share(const msg_share_t *in, uint8_t *buf)
     return (uint16_t)(p - buf);
 }
 
-
+/**
+ * @brief Encode a PASSIVE message payload into the wire buffer.
+ *
+ * Wire layout:
+ * @code
+ * [SEQ]                       1 byte
+ * [POLL_RX_TS]                MSG_TS_LEN bytes
+ * [POLL_PWR_DIFF_Q8]          2 bytes  (int16_t)
+ * [POLL_ANTENNA_UNRELIABLE]   1 byte
+ * [RESP_RX_TS]                MSG_TS_LEN bytes
+ * [RESP_PWR_DIFF_Q8]          2 bytes  (int16_t)
+ * [RESP_ANTENNA_UNRELIABLE]   1 byte
+ * [PASSIVE_TX_TS]             MSG_TS_LEN bytes
+ * [ENTRY_COUNT]               1 byte
+ * [ENTRIES × entry_count]     (MSG_TS_LEN + 2 + 2 + 1) bytes each
+ * [IMU_VEL_HORIZ]             4 bytes  (float)
+ * [IMU_VEL_VERT]              4 bytes  (float)
+ * @endcode
+ *
+ * @param[in]  in   Populated passive struct.
+ * @param[out] buf  Output buffer of sufficient size.
+ * @return Total bytes written.
+ */
 static uint16_t msg_encode_passive(const msg_passive_t *in, uint8_t *buf)
 {
     uint8_t *p = &buf[MSG_PAYLOAD_OFFSET_SEQ];
 
     *p++ = in->seq_num;
 
-    u64_to_ts_buf(in->poll_rx_ts, p);       p += MSG_TS_LEN;
-    memcpy(p, &in->poll_pwr_diff_q8, sizeof(int16_t));  p += sizeof(int16_t);
-    p[0] = in->poll_antenna_unreliable ? 1 : 0; p += 1;
+    u64_to_ts_buf(in->poll_rx_ts, p);                              p += MSG_TS_LEN;
+    memcpy(p, &in->poll_pwr_diff_q8, sizeof(int16_t));            p += sizeof(int16_t);
+    p[0] = in->poll_antenna_unreliable ? 1 : 0;                   p += 1;
 
-    u64_to_ts_buf(in->resp_rx_ts, p);       p += MSG_TS_LEN;
-    memcpy(p, &in->resp_pwr_diff_q8, sizeof(int16_t));  p += sizeof(int16_t);
-    p[0] = in->resp_antenna_unreliable ? 1 : 0; p += 1; 
+    u64_to_ts_buf(in->resp_rx_ts, p);                              p += MSG_TS_LEN;
+    memcpy(p, &in->resp_pwr_diff_q8, sizeof(int16_t));            p += sizeof(int16_t);
+    p[0] = in->resp_antenna_unreliable ? 1 : 0;                   p += 1;
 
-    /* final_rx_ts removed */
-    u64_to_ts_buf(in->passive_tx_ts, p); p += MSG_TS_LEN;
+    u64_to_ts_buf(in->passive_tx_ts, p);                           p += MSG_TS_LEN;
 
     *p++ = in->entry_count;
     for (int i = 0; i < in->entry_count; i++) {
-        u64_to_ts_buf(in->entries[i], p);       p += MSG_TS_LEN;
-        memcpy(p, &in->entry_pwr_diff_q8[i], sizeof(int16_t)); p += sizeof(int16_t);
-        memcpy(p, &in->entry_ids[i],     sizeof(uint16_t));  p += sizeof(uint16_t);
-        p[0] = in->entry_antenna_unreliable[i] ? 1 : 0; p += 1;
+        u64_to_ts_buf(in->entries[i], p);                          p += MSG_TS_LEN;
+        memcpy(p, &in->entry_pwr_diff_q8[i], sizeof(int16_t));    p += sizeof(int16_t);
+        memcpy(p, &in->entry_ids[i],         sizeof(uint16_t));   p += sizeof(uint16_t);
+        p[0] = in->entry_antenna_unreliable[i] ? 1 : 0;           p += 1;
     }
 
     memcpy(p, &in->IMU_vel_horiz, sizeof(float)); p += sizeof(float);
@@ -480,7 +585,7 @@ static uint16_t msg_encode_passive(const msg_passive_t *in, uint8_t *buf)
     return (uint16_t)(p - buf);
 }
 
-/* ── Debug self-tests ───────────────────────────────────────────────────── */
+/* -- Debug self-tests ----------------------------------------------------- */
 
 #ifdef UWB_DEBUG
 
@@ -489,8 +594,6 @@ static uint16_t msg_encode_passive(const msg_passive_t *in, uint8_t *buf)
  *
  * Copies the TX buffer and injects synthetic RSSI and first-path values
  * so the decoder sees realistic metadata without real hardware.
- *
- * @note May not reflect current wire layout after message format changes.
  *
  * @param[in] tx    TX frame to mirror.
  * @param[in] rssi  Synthetic total received power (Q8 fixed-point).
@@ -502,9 +605,9 @@ static dwm_rx_frame_t make_rx_frame(const dwm_tx_frame_t *tx, int16_t rssi, int1
     dwm_rx_frame_t rx;
     memset(&rx, 0, sizeof(rx));
     memcpy(rx.data, tx->data, tx->len);
-    rx.len      = tx->len;
-    rx.rssi_q8  = rssi;
-    rx.fp_q8    = fp;
+    rx.len    = tx->len;
+    rx.rssi_q8 = rssi;
+    rx.fp_q8   = fp;
     return rx;
 }
 
@@ -529,7 +632,7 @@ static void test_sync(void)
     msg_t rx_msg;
     msg_decode(&rx_frame, &rx_msg);
 
-    mprintf("SYNC IN:  seq=0x%02X\r\n",   tx_msg.data.sync.seq_num);
+    mprintf("SYNC IN:  seq=0x%02X\r\n", tx_msg.data.sync.seq_num);
     mprintf("SYNC OUT: seq=0x%02X\r\n\r\n", rx_msg.data.sync.seq_num);
 }
 
@@ -551,8 +654,7 @@ static void test_poll(void)
     msg_decode(&rx_frame, &rx_msg);
 
     mprintf("POLL IN:  seq=0x%02X\r\n", tx_msg.data.poll.seq_num);
-    mprintf("POLL OUT: seq=0x%02X ts=", rx_msg.data.poll.seq_num);
-
+    mprintf("POLL OUT: seq=0x%02X\r\n\r\n", rx_msg.data.poll.seq_num);
 }
 
 /**
@@ -573,9 +675,7 @@ static void test_response(void)
     msg_decode(&rx_frame, &rx_msg);
 
     mprintf("RESP IN:  seq=0x%02X\r\n", tx_msg.data.response.seq_num);
-    mprintf("RESP OUT: seq=0x%02X\r\n\r\n",
-            rx_msg.data.response.seq_num);
-
+    mprintf("RESP OUT: seq=0x%02X\r\n\r\n", rx_msg.data.response.seq_num);
 }
 
 /**
@@ -588,10 +688,10 @@ static void test_final(void)
         .sender   = 0x0077,
         .receiver = 0x0088,
         .data.final = {
-            .seq_num     = 0x09,
-            .poll_tx_ts  = 0x0000001111111111ULL,
-            .resp_rx_ts  = 0x0000002222222222ULL,
-            .final_tx_ts = 0x0000003333333333ULL,
+            .seq_num      = 0x09,
+            .poll_tx_ts   = 0x0000001111111111ULL,
+            .resp_rx_ts   = 0x0000002222222222ULL,
+            .final_tx_ts  = 0x0000003333333333ULL,
             .resp_pwr_diff_q8 = -400,
         }
     };
@@ -616,9 +716,6 @@ static void test_final(void)
  * @brief Run all message encode/decode roundtrip tests.
  *
  * Prints results via @c mprintf. Only compiled when @c UWB_DEBUG is defined.
- *
- * @warning This function may not reflect current wire layout after
- *          message format changes — verify before relying on it.
  */
 void msg_run_tests(void)
 {

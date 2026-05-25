@@ -4,11 +4,11 @@
  *
  * Frame wire layout:
  * @code
- * ┌──────────┬─────────┬─────────┬─────────────────────┐
- * │  [0]     │ [1..2]  │ [3..4]  │ [5..]               │
- * │  type    │ sender  │receiver │ payload             │
- * │  1 byte  │ 2 bytes │ 2 bytes │ message-specific    │
- * └──────────┴─────────┴─────────┴─────────────────────┘
+ * +----------+---------+---------+---------------------+
+ * |  [0]     | [1..2]  | [3..4]  | [5..]               |
+ * |  type    | sender  |receiver | payload             |
+ * |  1 byte  | 2 bytes | 2 bytes | message-specific    |
+ * +----------+---------+---------+---------------------+
  * @endcode
  */
 
@@ -26,7 +26,7 @@
 extern "C" {
 #endif
 
-/* ── Header offsets ─────────────────────────────────────────────────────── */
+/* -- Header offsets ------------------------------------------------------- */
 
 /** @brief Byte offset of the message type field in the frame buffer. */
 #define MSG_START_LOCATION      0
@@ -40,12 +40,12 @@ extern "C" {
 /** @brief Total length of the message header in bytes (type + sender + receiver). */
 #define MSG_HEADER_LEN          (MSG_OFFSET_RECEIVER + 2)
 
-/* ── Timestamp ──────────────────────────────────────────────────────────── */
+/* -- Timestamp ------------------------------------------------------------ */
 
 /** @brief Length of a DW3000 40-bit timestamp as stored on the wire (bytes). */
 #define MSG_TS_LEN  5
 
-/* ── Payload offsets ────────────────────────────────────────────────────── */
+/* -- Payload offsets ------------------------------------------------------ */
 
 /** @brief Byte offset of the sequence number — first byte after the header. */
 #define MSG_PAYLOAD_OFFSET_SEQ      (MSG_HEADER_LEN)
@@ -84,7 +84,7 @@ extern "C" {
 #define MSG_PAYLOAD_OFFSET_RESP_FP \
     (MSG_HEADER_LEN + 1 + MSG_TS_LEN * 3 + sizeof(int16_t))
 
-/* ── Message type enum ──────────────────────────────────────────────────── */
+/* -- Message type enum ---------------------------------------------------- */
 
 /**
  * @brief Identifies the role/purpose of a UWB frame.
@@ -103,7 +103,7 @@ typedef enum {
     MSG_TYPE_PASSIVE  = 0x06, /**< Passive — passive observer broadcasts its TWR observations. */
 } msg_type_t;
 
-/* ── Per-message payload structs ────────────────────────────────────────── */
+/* -- Per-message payload structs ------------------------------------------ */
 
 /**
  * @brief Payload for @c MSG_TYPE_SYNC.
@@ -230,7 +230,7 @@ typedef struct {
 
 } msg_passive_t;
 
-/* ── Unified decoded message container ─────────────────────────────────── */
+/* -- Unified decoded message container ----------------------------------- */
 
 /**
  * @brief Container for a fully decoded UWB message of any type.
@@ -256,7 +256,7 @@ typedef struct {
     } data;
 } msg_t;
 
-/* ── Public API ─────────────────────────────────────────────────────────── */
+/* -- Public API ----------------------------------------------------------- */
 
 /**
  * @brief Decode a raw RX frame into a typed message struct.

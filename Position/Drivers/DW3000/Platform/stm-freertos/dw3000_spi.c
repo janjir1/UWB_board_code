@@ -19,7 +19,7 @@
  *   48 MHz:  /16 = 3.0 MHz (slow),  /2 = 24 MHz (fast)
  *   16 MHz:  /8  = 2.0 MHz (slow),  /2 =  8 MHz (fast)
  *
- * DW3000 requires ≤3 MHz until dwt_initialise() completes, max 38 MHz after.
+ * DW3000 requires <=3 MHz until dwt_initialise() completes, max 38 MHz after.
  */
 
 #include "main.h"

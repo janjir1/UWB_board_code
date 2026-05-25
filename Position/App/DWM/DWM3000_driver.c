@@ -1,4 +1,4 @@
-// ─── Includes ─────────────────────────────────────────────────────────────────
+// --- Includes -----------------------------------------------------------------
 
 #include <string.h>
 #include <stdint.h>
@@ -25,17 +25,17 @@ extern SPI_HandleTypeDef hspi1;
 //TODO create functions to go to IDLE_RC (cannot track internal time but very fast wakeup and lower
 //power consuption then IDLE [also called IDLE_PLL])
 
-// ─── Queues ───────────────────────────────────────────────────────────────────
+// --- Queues -------------------------------------------------------------------
 
 QueueHandle_t rx_queue     = NULL;
 QueueHandle_t tx_queue     = NULL;
 QueueHandle_t wakeup_queue = NULL;
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// --- Constants ----------------------------------------------------------------
 
 static uint16_t s_short_addr = 0;   // IEEE 802.15.4 short address, derived from MCU UID
 
-// ─── Internal helpers ─────────────────────────────────────────────────────────
+// --- Internal helpers ---------------------------------------------------------
 
 /*! ------------------------------------------------------------------------------------------------------------------
  * @brief Convert a 5-byte little-endian DW3000 timestamp buffer to a uint64_t.
@@ -70,7 +70,7 @@ static void log_rx_error(uint32_t status)
     else                                       mprintf("RX ERR: unknown 0x%08lX\r\n", status);
 }
 
-// ─── Init ─────────────────────────────────────────────────────────────────────
+// --- Init ---------------------------------------------------------------------
 
 /*! ------------------------------------------------------------------------------------------------------------------
  * @brief Initialise the DW3000 hardware and driver.
@@ -158,14 +158,24 @@ bool dwm_selftest(void)
     return true;
 }
 
-uint16_t dwm_get_ant_delay(uint16_t addr){
-    switch(addr){
+/**
+ * @brief Returns the antenna delay calibration value for a given device address.
+ *
+ * Each device has a unique per-unit offset added to the base @ref DWM_ANT_DELAY
+ * value to compensate for hardware variation. Falls back to a default offset
+ * of 58 for unknown addresses.
+ *
+ * @param addr 16-bit short address of the UWB device.
+ * @return Calibrated antenna delay value.
+ */
+uint16_t dwm_get_ant_delay(uint16_t addr) {
+    switch (addr) {
         case 0x63D8: return DWM_ANT_DELAY + 58u;
         case 0xC019: return DWM_ANT_DELAY + 55u;
         case 0x91ED: return DWM_ANT_DELAY + 59u;
         case 0xA262: return DWM_ANT_DELAY + 61u;
         case 0x28CC: return DWM_ANT_DELAY + 58u;
-        default: return DWM_ANT_DELAY + 58u;
+        default:     return DWM_ANT_DELAY + 58u;
     }
 }
 
@@ -293,7 +303,7 @@ uint16_t dwm_get_addr(void)
     return s_short_addr;
 }
 
-// ─── ISR Callbacks ────────────────────────────────────────────────────────────
+// --- ISR Callbacks ------------------------------------------------------------
 
 /*! ------------------------------------------------------------------------------------------------------------------
  * @brief DW3000 RX complete callback — fired from ISR context on successful frame reception.
@@ -391,7 +401,7 @@ void cb_spi_rdy(const dwt_cb_data_t *cb_data)
     portYIELD_FROM_ISR(woken);
 }
 
-// ─── RX ───────────────────────────────────────────────────────────────────────
+// --- RX -----------------------------------------------------------------------
 
 /*! ------------------------------------------------------------------------------------------------------------------
  * @brief Arm the DW3000 receiver and block until a frame is received, a timeout occurs, or an error is reported.
@@ -469,7 +479,7 @@ void dwm_rx(dwm_rx_frame_t *result, uint32_t timeout_ms, bool keep_listening, bo
 
 }
 
-// ─── TX ───────────────────────────────────────────────────────────────────────
+// --- TX -----------------------------------------------------------------------
 
 /*! ------------------------------------------------------------------------------------------------------------------
  * @brief Transmit a frame immediately and block until the TX done callback posts the timestamp.
@@ -553,7 +563,7 @@ dwm_tx_event_type_t dwm_tx_delayed(dwm_tx_frame_t *frame, uint64_t final_rmarker
     return DWM_TX_OK;
 }
 
-// ─── Sleep / Wakeup ───────────────────────────────────────────────────────────
+// --- Sleep / Wakeup -----------------------------------------------------------
 
 /*! ------------------------------------------------------------------------------------------------------------------
  * @brief Put the DW3000 into DEEPSLEEP, saving UWB config to AON.
@@ -629,7 +639,7 @@ int dwm_exit_idle_rc(void)
 }
 
 #ifdef UWB_DEBUG
-// ─── Test: continuous TX/RX with sleep ───────────────────────────────────────────
+// --- Test: continuous TX/RX with sleep -------------------------------------------
 
 /*! ------------------------------------------------------------------------------------------------------------------
  * @brief Test function — transmit a counter frame every ~1s with sleep between transmissions.

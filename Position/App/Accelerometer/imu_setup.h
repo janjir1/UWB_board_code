@@ -10,12 +10,12 @@
  * ================================================================ */
 #define IMU_FIFO_RAW_BUF_ENTRIES (IMU_MAX_SAMPLES * 2 + 8)
 
-/* ── Boot ────────────────────────────────────────────────────────── */
+/* -- Boot ---------------------------------------------------------- */
 
 #define IMU_BOOT_TIME_MS        10      // sensor startup delay, do not go below 10
 
 
-/* ── Accelerometer ───────────────────────────────────────────────── */
+/* -- Accelerometer ------------------------------------------------- */
 
 /* Output data rate — how often a new accel sample is produced
  * Must match IMU_FIFO_XL_BATCH below.
@@ -59,7 +59,7 @@
 
 
 
-/* ── Gyroscope ───────────────────────────────────────────────────── */
+/* -- Gyroscope ----------------------------------------------------- */
 
 /* Output data rate — should match IMU_XL_ODR in most cases
  * Same options as accel ODR above.
@@ -92,7 +92,7 @@
 #define IMU_GY_LP1_BW           LSM6DSV_GY_ULTRA_LIGHT
 
 
-/* ── SFLP (Sensor Fusion Low Power) ──────────────────────────────── */
+/* -- SFLP (Sensor Fusion Low Power) -------------------------------- */
 
 /* SFLP output data rate — independent of accel/gyro ODR
  * Minimum recommended: 2× your main ODR.
@@ -114,7 +114,7 @@
 #define IMU_SFLP_BATCH_GBIAS    PROPERTY_DISABLE  // gyro bias — enable if you want raw bias values
 
 
-/* ── FIFO batching ───────────────────────────────────────────────── */
+/* -- FIFO batching ------------------------------------------------- */
 
 /* Must match IMU_XL_ODR / IMU_GY_ODR above.
  * Accel options: LSM6DSV_XL_NOT_BATCHED, LSM6DSV_XL_BATCHED_AT_7Hz5 ... _AT_240Hz
@@ -135,7 +135,7 @@
  *   LSM6DSV_TMSTMP_DEC_8   → every 8 samples
  *   LSM6DSV_TMSTMP_DEC_32  → every 32 samples
  */
-#define IMU_FIFO_TS_DEC         LSM6DSV_TMSTMP_DEC_8
+#define IMU_FIFO_TS_DEC         LSM6DSV_TMSTMP_DEC_1
 
 /* Maximum samples to read per FIFO drain.
  * At 7.5 Hz over 200ms: 2 accel + 2 gyro + 3 quat + 3 gravity + 2 ts = ~12 entries
@@ -152,7 +152,7 @@
 #endif
 
 
-/* ── Calibration ───────────────────────────────────────────────── */
+/* -- Calibration ------------------------------------------------- */
 #ifdef UWB_BOARD_V1_1
     #define IMU_CAL_SAMPLES   240
     #define IMU_CAL_ODR_HZ    256

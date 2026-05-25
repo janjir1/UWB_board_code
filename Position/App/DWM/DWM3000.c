@@ -1,9 +1,9 @@
-#include "cmsis_os.h" // or "FreeRTOS.h" depending on your setup
+#include "cmsis_os.h"
 #include "queue.h"
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "cmsis_os2.h"
 #include "dw3000_hw.h"
@@ -31,42 +31,42 @@
     mprintf("UWB_eTWR_TEST - %-20s: 0x%08lX%08lX\r\n", (label), U64_HI(val), U64_LO(val))
 
 /**
- * @brief Watchdog to catch hardware TX lockups and RTOS sleep underflows.
- * * @param result_sync  The return value from uwb_sync()
- * @param result_etwr  The return value from uwb_extended_twr()
- * @param sleep_time   The requested sleep time from uwb_share()
- * @return Safely clamped sleep time for osDelay()
+ * @brief Watchdog to catch hardware TX lockups and invalid sleep times.
+ *
+ * Tracks consecutive TX failures across sync and eTWR operations. After 10
+ * consecutive failures, the DWM3000 is fully re-initialized. Also clamps
+ * any out-of-range sleep time to @ref DEEP_SLEEP.
+ *
+ * @param result_sync  Return value from uwb_sync().
+ * @param result_etwr  Return value from uwb_extended_twr().
+ * @param sleep_time   Requested sleep duration in milliseconds from uwb_share().
+ * @return Safely clamped sleep time for use with osDelay().
  */
-uint32_t tx_err_watchdog(uwb_sync_result_t result_sync, 
-                                     uwb_etwr_result_t result_etwr, 
-                                     uint32_t sleep_time)
+uint32_t tx_err_watchdog(uwb_sync_result_t result_sync,
+                         uwb_etwr_result_t result_etwr,
+                         uint32_t sleep_time)
 {
-    /* Static counter persists across loop iterations */
     static uint8_t tx_fail_count = 0;
 
-    /* ------------------------------------------------------------------
-     * GUARD 1: DWM3000 Hardware TX Failure Watchdog
-     * ------------------------------------------------------------------ */
     if (result_sync == UWB_SYNC_TX_FAILED || result_etwr == UWB_TWR_TX_FAILED || sleep_time > 5000) {
         tx_fail_count++;
-        if (tx_fail_count >= 10) {  /* 10 consecutive TX failures */
+        if (tx_fail_count >= 10) {
             mprintf("ERROR: Consecutive TX failures! Re-initializing DWM3000...\r\n");
             mprintf("WARNING: Invalid sleep time %lu detected. Defaulting to DEEP_SLEEP.\r\n", sleep_time);
-       
+
             bool passed = dwm_init();
             passed &= dwm_configure();
-            
+
             if (!passed) {
                 mprintf("ERROR: DWM3000 re-initialization failed!\r\n");
             } else {
                 mprintf("SUCCESS: DWM3000 re-initialized.\r\n");
             }
-            tx_fail_count = 0; /* Reset counter after recovery attempt */
+            tx_fail_count = 0;
             return DEEP_SLEEP - 50;
         }
     } else {
-        /* If we succeed or fail for a normal RF reason (like TIMEOUT), reset the counter */
-        tx_fail_count = 0; 
+        tx_fail_count = 0;
     }
 
     if (sleep_time > 5000) {
@@ -77,19 +77,24 @@ uint32_t tx_err_watchdog(uwb_sync_result_t result_sync,
     return sleep_time;
 }
 
-void low_battery_check(void){
+/**
+ * @brief Checks battery voltage and shuts down if critically low.
+ *
+ * Reads the current power status and, if the battery voltage is below 3.50 V
+ * and USB is not connected, puts the DWM3000 to sleep, flashes the red LED
+ * three times, and enters MCU shutdown mode.
+ */
+void low_battery_check(void) {
     const BatteryStatus_t *s = power_get_status();
 
     bool bat_too_low = (s->battery_voltage_V > 0.5f)
                     && (s->battery_voltage_V < 3.50f)
                     && !s->usb_connected;
 
-    if (bat_too_low)
-    {
+    if (bat_too_low) {
         dwm_sleep();
 
-        for (int i = 0; i < 3; i++)
-        {
+        for (int i = 0; i < 3; i++) {
             HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_SET);
             osDelay(200);
             HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_RESET);
@@ -99,10 +104,25 @@ void low_battery_check(void){
         __HAL_PWR_CLEAR_FLAG(PWR_FLAG_WUF2);
         HAL_PWREx_EnterSHUTDOWNMode();
     }
-
-    return;
 }
 
+/**
+ * @brief Main FreeRTOS ranging task for the DWM3000 UWB module.
+ *
+ * Performs full system startup: battery check, DWM3000 initialization,
+ * self-test, configuration, and network setup. Then waits for a boot
+ * configuration over UART before entering the main ranging loop.
+ *
+ * In the ranging loop, the task executes UWB sync, extended TWR, distance
+ * calculation, and EKF position update on every iteration. Between iterations,
+ * the device enters low-power sleep (STOP1 mode when USB is disconnected, or
+ * osDelay when USB is active). Power status is checked every 50 iterations.
+ *
+ * If @c boot_cfg.charge_only is set, the DWM3000 is kept in sleep and the task
+ * only services UART reset requests.
+ *
+ * @param argument  Unused FreeRTOS task argument.
+ */
 void StartRangingTask(void *argument) {
 
     power_read();
@@ -114,8 +134,8 @@ void StartRangingTask(void *argument) {
         mprintf("DWM3000 initialized successfully\r\n");
     } else {
         mprintf("DWM3000 initialization failed\r\n");
-        vTaskDelete( NULL );
-        while(1) { } 
+        vTaskDelete(NULL);
+        while (1) { }
     }
     osDelay(200);
 
@@ -124,8 +144,8 @@ void StartRangingTask(void *argument) {
         mprintf("DWM3000 self test passed\r\n");
     } else {
         mprintf("DWM3000 self test failed\r\n");
-        vTaskDelete( NULL );
-        while(1) { } 
+        vTaskDelete(NULL);
+        while (1) { }
     }
     osDelay(200);
 
@@ -134,8 +154,8 @@ void StartRangingTask(void *argument) {
         mprintf("DWM3000 configured successfully\r\n");
     } else {
         mprintf("DWM3000 configure failed\r\n");
-        vTaskDelete( NULL );
-        while(1) { } 
+        vTaskDelete(NULL);
+        while (1) { }
     }
     osDelay(200);
 
@@ -143,7 +163,7 @@ void StartRangingTask(void *argument) {
 
     bool ok = uart_boot_start();
     mprintf("uart_boot_start -> %d\r\n", ok ? 1 : 0);
-    
+
     osThreadFlagsWait(0x01, osFlagsWaitAll, osWaitForever);
 
     boot_config_t boot_cfg = uart_boot_config_read();
@@ -151,35 +171,34 @@ void StartRangingTask(void *argument) {
     mprintf("boot_cfg.valid = %d\r\n", boot_cfg.valid ? 1 : 0);
     mprintf("boot_cfg.charge_only = %d\r\n", boot_cfg.charge_only ? 1 : 0);
 
-
     ekf_init(boot_cfg.hints, 4);
     uart_rst_arm();
 
     uint8_t counter = 0;
 
-    if (!boot_cfg.charge_only){
-        while(1){
-            
+    if (!boot_cfg.charge_only) {
+        while (1) {
+
             mprintf("Starting sync\r\n");
             HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
             uwb_sync_result_t result_sync = uwb_sync();
             mprintf("Sync result: %d\r\n", result_sync);
 
-            if (result_sync == UWB_SYNC_UNEXPECTED_MASTER){
+            if (result_sync == UWB_SYNC_UNEXPECTED_MASTER) {
                 HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
                 continue;
-            } 
+            }
 
             uwb_etwr_result_t result_etwr = uwb_extended_twr(result_sync);
 
-            if ((result_etwr == UWB_TWR_UNEXPECTED_MASTER) || (result_etwr == UWB_TWR_TIMEOUT)){
+            if ((result_etwr == UWB_TWR_UNEXPECTED_MASTER) || (result_etwr == UWB_TWR_TIMEOUT)) {
                 HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
                 continue;
-            } 
+            }
 
             distance_calculate(result_etwr);
 
-            uint32_t sleep_time = uwb_share (result_etwr, DEEP_SLEEP); 
+            uint32_t sleep_time = uwb_share(result_etwr, DEEP_SLEEP);
             sleep_time = tx_err_watchdog(result_sync, result_etwr, sleep_time);
 
             HAL_GPIO_TogglePin(LED_W_GPIO_Port, LED_W_Pin);
@@ -190,7 +209,6 @@ void StartRangingTask(void *argument) {
 
             counter++;
 
-            
             if (counter % 50 == 0) {
                 power_read();
                 uart_print_power();
@@ -198,14 +216,13 @@ void StartRangingTask(void *argument) {
                 counter = 0;
             }
 
-            if (boot_cfg.valid){
-                ekf_step(0, 0); //TODO, setup IMU inputs
+            if (boot_cfg.valid) {
+                ekf_step(0, 0);
                 network_print_positions();
-
             }
 
             bool rst_requested = uart_periodic_poll();
-            if (rst_requested){
+            if (rst_requested) {
                 mprintf("UART requested reset\r\n");
                 osDelay(100);
                 NVIC_SystemReset();
@@ -213,49 +230,35 @@ void StartRangingTask(void *argument) {
 
             uint32_t elapsed = osKernelGetTickCount() - t_start;
 
-            if (elapsed < sleep_time){
+            if (elapsed < sleep_time) {
                 uint32_t remaining = sleep_time - elapsed;
-                 //osDelay(remaining);
 
-                 if (get_usb_ready())
-                {
+                if (get_usb_ready()) {
                     osDelay(remaining);
-                }
-                else
-                {
-                    
+                } else {
                     HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
-                    osDelay(20); //finish what needs to be done
+                    osDelay(20);
                     HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
-
-                    sleep_stop1_ms(remaining-20);
-                    //osDelay(remaining);
+                    sleep_stop1_ms(remaining - 20);
                 }
-
             }
-                
 
             dwm_wakeup();
         }
 
-
     } else {
         dwm_sleep();
-        while(1) {
+        while (1) {
             bool rst_requested = uart_periodic_poll();
-            if (rst_requested){
+            if (rst_requested) {
                 mprintf("UART requested reset\r\n");
-                osDelay(100);        // let RST-ACK finish transmitting before reset
+                osDelay(100);
                 NVIC_SystemReset();
             }
             osDelay(1000);
         }
     }
-    
 
-    vTaskDelete( NULL );
-    while(1) { } 
+    vTaskDelete(NULL);
+    while (1) { }
 }
-
-
-

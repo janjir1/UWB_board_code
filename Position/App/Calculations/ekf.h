@@ -12,7 +12,7 @@
  * ============================================================================
  *
  * PHASE 1 — ANCHOR SURVEY  (EKF_PHASE_ANCHOR_SURVEY)
- * ─────────────────────────────────────────────────────────────────────────────
+ * -----------------------------------------------------------------------------
  *  Goal   : Determine the 3-D positions of all EKF_NUM_ANCHORS anchors.
  *
  *  Inputs : Inter-anchor UWB range measurements only.
@@ -42,7 +42,7 @@
  *
  *
  * PHASE 2 — TAG LOCALIZATION  (EKF_PHASE_TAG_LOCALIZE)
- * ─────────────────────────────────────────────────────────────────────────────
+ * -----------------------------------------------------------------------------
  *  Goal   : Estimate the 3-D positions of all non-anchor (tag) devices.
  *
  *  Inputs : UWB ranges  — anchor→tag  AND  tag→tag.
@@ -101,7 +101,7 @@ extern const uint16_t EKF_ANCHOR_IDS[EKF_NUM_ANCHORS];
 
 /** Position variance threshold (m²) per axis.  Phase 1 ends when every
  *  estimated anchor axis satisfies  P[k][k] < EKF_ANCHOR_P_CONVERGED.
- *  0.5 m²  ≈  ±0.71 m std-dev.  Increase for a faster but noisier survey;
+ *  0.5 m²  ~=  ±0.71 m std-dev.  Increase for a faster but noisier survey;
  *  decrease for a more accurate anchor map (takes longer).               */
 #define EKF_ANCHOR_P_CONVERGED   0.02f
 
@@ -132,7 +132,7 @@ extern const uint16_t EKF_ANCHOR_IDS[EKF_NUM_ANCHORS];
 #define EKF_Q_Z_POS              0.0f  /* Process noise — Z axis   (m²/step)  */
 #define EKF_Q_H_FLOOR            0.002f  /* Horizontal noise floor   (m²/step)  */
 #define EKF_Q_H_VEL_SCALE        2.0f    /* extra variance per (v·dt)² when moving */
-#define EKF_OUTLIER_GATE_POS     2.5f    /* Reject |innov| > gate·√S            */
+#define EKF_OUTLIER_GATE_POS     2.5f    /* Reject |innov| > gate·sqrtS            */
 #define EKF_OUTLIER_GATE_NEG     4.0f
 #define EKF_INIT_P_POS           9.0f    /* Initial position variance  (m²)     */
 #define EKF_P_MAX                100.0f  /* P diagonal clamp           (m²)     */
@@ -144,7 +144,7 @@ extern const uint16_t EKF_ANCHOR_IDS[EKF_NUM_ANCHORS];
 #define EKF_STATIONARY_STEPS     3U      /* Consecutive deadband steps → static */
 #define EKF_Q_H_FLOOR_STATIONARY 1e-8f   /* Horiz. noise when stationary (m²)   */
 #define EKF_VEL_EMA_ALPHA        0.6f    /* EMA smoothing: 0=frozen  1=raw IMU  */
-#define EKF_HDG_MIN_DELTA_M      0.05f   /* Min Δpos to update heading  (m)     */
+#define EKF_HDG_MIN_DELTA_M      0.05f   /* Min @f$\delta@f$pos to update heading  (m)     */
 #define EKF_MAX_STEP_M           0.4f   /* Max predict displacement/step (m)   */
 #define EKF_MAX_UPDATE_M         0.5f    /* Max update displacement/step (m)    */
 
@@ -165,7 +165,7 @@ typedef enum {
 
 typedef struct {
 
-    /* ── Fields used by outside code — do NOT remove or reorder ───────────── */
+    /* -- Fields used by outside code — do NOT remove or reorder ------------- */
     float    x[EKF_MAX_STATE];                 /**< Joint state vector          */
     float    P[EKF_MAX_STATE][EKF_MAX_STATE];  /**< Joint covariance matrix     */
     float    Q[EKF_MAX_STATE][EKF_MAX_STATE];  /**< Process noise (diagonal)    */
@@ -173,10 +173,10 @@ typedef struct {
     uint16_t peer_ids[EKF_MAX_PEERS];          /**< Network ID per slot         */
     bool     initialised;                      /**< True after first ekf_step() */
 
-    /* ── Appended fields — safe to add ─────────────────────────────────────── */
+    /* -- Appended fields — safe to add --------------------------------------- */
     bool     peer_seeded[EKF_MAX_PEERS];       /**< First-fix seed done         */
     bool     peer_away[EKF_MAX_PEERS];         /**< Peer absent from network    */
-    bool     peer_imu_valid[EKF_MAX_PEERS];    /**< ≥1 valid IMU packet seen    */
+    bool     peer_imu_valid[EKF_MAX_PEERS];    /**< >=1 valid IMU packet seen    */
     uint32_t last_tick_ms;                     /**< Timestamp of last step      */
     uint16_t stationary_count[EKF_MAX_PEERS];  /**< Steps below IMU deadband    */
     int8_t   self_slot;                        /**< Slot index for self; -1=none*/
@@ -209,7 +209,7 @@ void ekf_init(const ekf_node_hint_t *pos_hints, uint8_t pos_hints_n);
  *   Phase 2:  used as self IMU velocity inputs (m/s, gravity removed).
  *
  *   @param az_self_ms  Self vertical velocity   (m/s)
- *   @param ah_self_ms  Self horizontal speed magnitude (m/s, ≥ 0)
+ *   @param ah_self_ms  Self horizontal speed magnitude (m/s, >= 0)
  */
 void ekf_step(float az_self_ms, float ah_self_ms);
 
